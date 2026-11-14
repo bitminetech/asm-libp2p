@@ -56,6 +56,7 @@ Standard: [asm-standard@2a19d3f](https://github.com/bitminetech/asm-standard/blo
 | Scenario runner | [tests/runner/](tests/runner/) |
 | Shell loop test | [tests/shell/](tests/shell/) |
 | transport-interop of libp2p/test-plans | [tests/interop/](tests/interop/) |
+| gossipsub-interop of libp2p/test-plans | [tests/gossipsub/](tests/gossipsub/) |
 | Live test on Ethereum mainnet | [tests/mainnet/](tests/mainnet/) |
 
 ## Target profile

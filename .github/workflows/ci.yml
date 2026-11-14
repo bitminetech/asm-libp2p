@@ -1,8 +1,8 @@
 # Build every target with the pinned toolchain and check each library against
 # the declared interface and frame rules, then on each of the 7 supported
 # targets run the scenario runner and the shell loop test, run transport
-# interop against go-libp2p and rust-libp2p, and write the tick tables
-# (ARCHITECTURE.md sections 1, 4, 7 and 10).
+# interop against go-libp2p and rust-libp2p, run gossipsub interop in Shadow,
+# and write the tick tables (ARCHITECTURE.md sections 1, 4, 7 and 10).
 name: ci
 
 on:
@@ -141,6 +141,81 @@ jobs:
           tests/interop/build-images.sh x86_64 "$RUNNER_TEMP" go-v0.48 rust-v0.56
       - name: Run the pairs
         run: tests/interop/run.sh x86_64 go-v0.48 rust-v0.56
+
+  # gossipsub-interop of libp2p/test-plans in the Shadow simulator, which runs
+  # only on Linux x86-64: 32 nodes of asm-libp2p alone, of go-libp2p alone,
+  # of asm-libp2p with each of go-libp2p, rust-libp2p, jvm-libp2p and
+  # nim-libp2p, and of all five.
+  gossipsub:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      SHADOW_COMMIT: 5a05740bad995b6dbb90b8a16effecf59eceee09     # v3.3.0
+      GO_VERSION: 1.24.1                                          # go.mod of the go node
+      RUST_VERSION: 1.100.0
+      NIM_VERSION: 2.2.10                                         # tested by nim-libp2p 22ab040
+      NIM_SHA256: 0a3a38752e97e9d44aa479b3a7b37336dfe0176daf22ee5b5218ad0991ecd211
+      UV_VERSION: 0.13.6
+      UV_SHA256: f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with: { name: build, path: build }
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with: { go-version: "${{ env.GO_VERSION }}", cache: false }
+      - name: Install the toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake findutils g++ gcc libc-dbg libclang-dev libglib2.0-0 libglib2.0-dev \
+            make netbase python3 python3-networkx util-linux xz-utils
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          curl -fsSL -o "$RUNNER_TEMP/nim.tar.xz" "https://nim-lang.org/download/nim-$NIM_VERSION-linux_x64.tar.xz"
+          echo "$NIM_SHA256  $RUNNER_TEMP/nim.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/nim.tar.xz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/nim-$NIM_VERSION/bin" >> "$GITHUB_PATH"
+          curl -fsSL -o "$RUNNER_TEMP/uv.tar.gz" \
+            "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/uv-x86_64-unknown-linux-gnu.tar.gz"
+          echo "$UV_SHA256  $RUNNER_TEMP/uv.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/uv.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/uv-x86_64-unknown-linux-gnu" >> "$GITHUB_PATH"
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$HOME/shadow/bin" >> "$GITHUB_PATH"
+      - id: shadow
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/shadow
+          key: shadow-${{ env.SHADOW_COMMIT }}-${{ env.RUST_VERSION }}
+      - name: Build Shadow
+        if: steps.shadow.outputs.cache-hit != 'true'
+        run: |
+          git init -q "$RUNNER_TEMP/shadow-src"
+          cd "$RUNNER_TEMP/shadow-src"
+          git fetch -q --depth 1 https://github.com/shadow/shadow "$SHADOW_COMMIT"
+          git checkout -q FETCH_HEAD
+          ./setup build --clean --prefix "$HOME/shadow"
+          ./setup install
+      - name: Build the nodes
+        run: tests/gossipsub/build.sh "$RUNNER_TEMP/gs"
+      - name: Run the compositions
+        run: |
+          set -o pipefail
+          shadow --version
+          tests/gossipsub/run.sh "$RUNNER_TEMP/gs" | tee "$RUNNER_TEMP/gs/results.txt"
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: gossipsub
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/gs/results.txt
+            ${{ runner.temp }}/gs/*.log
+            ${{ runner.temp }}/gs/*.check
+            ${{ runner.temp }}/gs/test-plans/gossipsub-interop/shadow-outputs/*/plots/analysis.txt
+            ${{ runner.temp }}/gs/test-plans/gossipsub-interop/shadow-outputs/*/hosts/*/*.stdout
 
   # Write the tick tables into docs/reference/ from the results of every target.
   # On a push to main, commit them when they changed. When main has moved on,
