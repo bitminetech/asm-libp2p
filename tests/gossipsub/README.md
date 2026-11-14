@@ -73,6 +73,7 @@ tests/gossipsub/run.sh /path/to/work
 | `run.py` | `build.sh` removes `make binaries`, which builds all 4 implementations before each run |
 | go node | Built with cgo instead of `-linkshared`: Shadow needs a dynamically linked binary |
 | asm-libp2p node | Linked dynamically against libc for the same reason; the library makes its system calls directly, and Shadow traps those with seccomp |
+| Shadow config | `run.sh` adds `experimental.native_preemption_enabled: true` for a composition with jvm: a JVM thread can spin without system calls, and Shadow then stops ("Busy loops" in Shadow's `docs/limitations.md`). Shadow preempts a thread after 100 ms of CPU time without a system call, and moves simulated time 10 ms. |
 
 ## Results
 

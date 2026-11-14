@@ -33,11 +33,13 @@ Run on 2026-11-14, on macOS ARM64, with 252 records of digest `8c9f62fe` from a 
 
 | Item | Count |
 |---|---|
-| Peers connected at once, most | 84 |
-| Status responses | 108 |
-| Requests answered | Status 4, Ping 29, Metadata 27 |
-| Goodbye requests | 100: reason 129 for 99, reason 3 for 1 |
-| New gossip messages | beacon_block 20, beacon_aggregate_and_proof 5117, sync_committee_contribution_and_proof 258 |
-| Duplicate gossip messages | 3207 |
-| Failed dials | CONNECT 56, HANDSHAKE 8, PEER_ID 2, CLOSED 58 |
-| Failed streams | NO_PEER 5, CLOSED 5 |
+| Peers connected at once, most | 96 |
+| Status responses | 115 |
+| Requests answered | Status 2, Ping 86, Metadata 20 |
+| Goodbye requests | 115: reason 129 for 114, reason 3 for 1 |
+| New gossip messages | beacon_block 25, beacon_aggregate_and_proof 6710, sync_committee_contribution_and_proof 432, data_column_sidecar 0 to 7: 94 |
+| Duplicate gossip messages | 3392 |
+| PARTIAL actions | 494 from 26 peers: 494 with parts metadata, 101 with a partial message, 105185 bytes |
+| Partial peers in the mesh of data_column_sidecar_0, most | 3 |
+| Failed dials | CONNECT 58, HANDSHAKE 4, PEER_ID 2, CLOSED 59 |
+| Failed streams | NO_PEER 5, CLOSED 4 |

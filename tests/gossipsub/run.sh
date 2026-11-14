@@ -14,6 +14,9 @@
 # with partial messages; empty: none); TIMEOUT=s seconds a run may take
 # (default 900). A run past it fails: the script prints the processes using
 # the most CPU, then stops it.
+# A composition with jvm runs with experimental.native_preemption_enabled in
+# the Shadow config: a JVM thread can spin without system calls, and Shadow
+# then stops (limitations.md of Shadow, "Busy loops").
 # Needs Shadow and uv on the PATH, and tests/gossipsub/build.sh first.
 #
 # Each line: PASS or FAIL, the scenario and composition; for subnet-blob-msg,
@@ -29,10 +32,18 @@ partial=${PARTIAL-asm asm+go asm+rust asm+nim}
 limit=${TIMEOUT:-900}
 cd "$gs" || exit 2
 pass=0 fail=0
+# The template of the suite, kept once: each run writes shadow.template.yaml from it.
+[ -f "$work/shadow.template.orig.yaml" ] || cp shadow.template.yaml "$work/shadow.template.orig.yaml"
 
 # run SCENARIO NODES COMPOSITION: one Shadow run; 0 when it ended within the limit.
 run() {
     name=$1-$2-$3
+    case $3 in
+      *jvm*) awk '{ print } /^experimental:$/ { print "  native_preemption_enabled: true"; found = 1 }
+                  END { exit !found }' "$work/shadow.template.orig.yaml" > shadow.template.yaml ||
+                 { echo "shadow.template.yaml: experimental not found" >&2; exit 2; } ;;
+      *) cp "$work/shadow.template.orig.yaml" shadow.template.yaml ;;
+    esac
     uv run run.py --node_count "$2" --composition $(echo "$3" | tr + ' ') \
         --scenario "$1" --output_dir "$name" > "$work/$name.log" 2>&1 &
     pid=$! waited=0
