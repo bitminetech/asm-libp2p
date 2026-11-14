@@ -14,7 +14,7 @@ tests/gossipsub/run.sh /path/to/work
 |---|---|
 | `node.c` | The asm-libp2p node of the test. Test code in C: it reads the script, turns its gossipsub parameters into the config, and writes the log lines of the suite; the library does the rest. |
 | `build.sh` | `build.sh WORK_DIR [IMPLEMENTATION ...]`: checks out test-plans in WORK_DIR, builds the asm-libp2p node as the implementation `asm`, and builds the go, rust, jvm and nim nodes. |
-| `run.sh` | `run.sh WORK_DIR [COMPOSITION ...]`: runs the `subnet-blob-msg` scenario in Shadow for each composition, such as `asm+go`, runs the check of the suite, and prints the means of the analysis of the suite. `NODES=n` sets the nodes of each run (default 32). |
+| `run.sh` | `run.sh WORK_DIR [COMPOSITION ...]`: runs the `subnet-blob-msg` scenario in Shadow for each composition, such as `asm+go`, runs the check of the suite, and prints the means of the analysis of the suite. `NODES=n` sets the nodes of each run (default 32); a run past `TIMEOUT` seconds (default 900) fails, with the processes using the most CPU. |
 
 [.github/workflows/ci.yml](../../.github/workflows/ci.yml) runs both scripts on GitHub's x86-64 Ubuntu runner.
 

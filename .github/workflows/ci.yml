@@ -216,6 +216,7 @@ jobs:
             ${{ runner.temp }}/gs/*.check
             ${{ runner.temp }}/gs/test-plans/gossipsub-interop/shadow-outputs/*/plots/analysis.txt
             ${{ runner.temp }}/gs/test-plans/gossipsub-interop/shadow-outputs/*/hosts/*/*.stdout
+            ${{ runner.temp }}/gs/test-plans/gossipsub-interop/shadow-outputs/*/hosts/*/*.stderr
 
   # Write the tick tables into docs/reference/ from the results of every target.
   # On a push to main, commit them when they changed. When main has moved on,
