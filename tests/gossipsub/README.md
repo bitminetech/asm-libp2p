@@ -59,19 +59,19 @@ tests/gossipsub/run.sh /path/to/work
 
 ## Results
 
-Run on 2026-11-14 in CI, 32 nodes per composition, seed 1. Each time is the mean over the 12 checked messages.
+Run on 2026-11-14 in CI, 32 nodes per composition, seed 1, with gossipsub v1.2 (commit 8c70da3). Each time is the mean over the 12 checked messages.
 
 | Composition | Reach | Time to every node | Time to half | Duplicates per node |
 |---|---|---|---|---|
-| asm | 100% | 0.590 s | 0.286 s | 6.72 |
+| asm | 100% | 0.294 s | 0.099 s | 4.52 |
 | go | 100% | 0.260 s | 0.107 s | 3.87 |
-| asm+go | 100% | 0.320 s | 0.151 s | 6.54 |
-| asm+rust | 100% | 0.310 s | 0.138 s | 6.21 |
-| asm+jvm | 100% | 0.306 s | 0.121 s | 7.34 |
-| asm+nim | 100% | 0.274 s | 0.110 s | 6.59 |
-| asm+go+rust+jvm+nim | 100% | 0.268 s | 0.111 s | 5.72 |
+| asm+go | 100% | 0.230 s | 0.112 s | 5.80 |
+| asm+rust | 100% | 0.256 s | 0.114 s | 4.30 |
+| asm+jvm | 100% | 0.249 s | 0.105 s | 5.18 |
+| asm+nim | 100% | 0.255 s | 0.096 s | 4.99 |
+| asm+go+rust+jvm+nim | 100% | 0.264 s | 0.110 s | 4.91 |
 
 - Every composition passes: every checked message reaches every node.
-- A network of asm-libp2p alone is slower, and has more duplicates, than a network of go-libp2p alone.
-- The go nodes speak gossipsub v1.2 and send IDONTWANT: 3212 "Sent Idontwant" log lines in the network of go alone, 789 in asm+go, where only links between two go nodes carry it. asm-libp2p speaks gossipsub v1.1, which has no IDONTWANT.
-- In asm+go, an asm-libp2p node receives 8.08 duplicates per message, and a go node 5.01.
+- A network of asm-libp2p alone is as fast as a network of go-libp2p alone.
+- With gossipsub v1.1 only (commit 1fef64a), a network of asm-libp2p alone took 0.590 s to every node and 0.286 s to half, with 6.72 duplicates per node.
+- Shadow warns on GitHub's runners that it cannot emulate cpuid, which may break determinism: runs of the same commit can differ a little.
