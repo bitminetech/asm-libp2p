@@ -642,118 +642,118 @@ The application sets the score parameters of a topic.
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_score`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_ip_count`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_score_all`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_behaviour_penalty`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_score_invalid`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_score_delivery`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_score_valid`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_score_rejected`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_score_duplicate`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_score_mesh_leave`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_decay`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_score_decay`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_on_app_score`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_on_topic_params`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |

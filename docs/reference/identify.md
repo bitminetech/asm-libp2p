@@ -99,14 +99,14 @@ libp2p_identify(stream)
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_identify`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |

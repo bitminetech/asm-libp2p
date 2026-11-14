@@ -3313,638 +3313,638 @@ A peer joined or left a topic.
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_peer_idx`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_topic_at`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_topic_idx`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_pt`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_topic_find`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_topic_get`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_topic_tidy`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_gs_ready`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_idx_find`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_idx_add`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_idx_del`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_seen_args`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_seen_find`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_seen_drop_tail`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_seen_tail`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_seen_add`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_seen_args_keep`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_seen_expire`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mc_args`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mc_find`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mc_tail`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mc_drop_tail`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mc_put`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mc_shift`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mc_sent`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_pend`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_pend_free`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_pend_status`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_promise_add`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_promise_keep`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_promise_drop_peer`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_gs_alloc`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_gs_push`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_pb_head`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_gs_rpc`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_gs_send_sub`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_gs_send_msg`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_gs_send_graft`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_gs_send_prune`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_gs_send_ids`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_gs_announce`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_gossip_peer_up`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_gossip_peer_down`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_gossip_out_ready`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_gossip_in_ready`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_gossip_rx`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_rpc_handle`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_field_bytes`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_peer_topic`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_rpc_sub`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_rpc_msg`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_rpc_control`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_backoff_secs`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_prune_to`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_ctl_graft`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_ctl_prune`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_ctl_ihave`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_ctl_iwant`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mesh_add`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mesh_remove`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_candidates`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_shuffle`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_on_subscribe`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_fanout_clear_topic`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_on_unsubscribe`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_on_publish`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_on_message_id`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_on_validation`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_seen_delivered`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_gossip_timers`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_heartbeat`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_list_score`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_list_outbound`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_sort_score`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_add_from_list`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mesh_maintain`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_keep_outbound`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_fanout_maintain`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_emit_gossip`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |

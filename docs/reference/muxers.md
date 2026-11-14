@@ -899,166 +899,166 @@ Bytes the shell writes to the socket of a connection.
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mux_data`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mux_end_frame`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mux_find`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mux_rst`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mux_error`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_yamux_feed`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_yamux_frame`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_yamux_stream`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mplex_feed`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mplex_frame`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_yamux_header`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mplex_header`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_chunk_take`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_yamux_emit`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mplex_emit`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_mux_gather`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_drain`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_drain_conn`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_out_drop`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
 ### `libp2p_conn_pending`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 | ✅ |  |  |  |
-| ARM64 | ✅ |  | ✅ |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
