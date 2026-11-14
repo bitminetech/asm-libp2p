@@ -133,6 +133,13 @@ typedef struct {
     int status;            /* 0 waiting, else MSG_NEW, MSG_DUPLICATE, MSG_DROPPED */
 } msg_rec;
 
+/* A PARTIAL action: the first bytes of each part. */
+typedef struct {
+    uint64_t peer, flags, tlen, glen, mlen, dlen;
+    uint8_t topic[32], group[32], meta[32], data[64];
+} partial_rec;
+#define MAX_PARTIALS 16
+
 typedef struct {
     int used, silent, dead;   /* silent: dials to it never connect; dead: it gets no bytes */
     void *state, *scratch;
@@ -145,6 +152,12 @@ typedef struct {
     uint64_t verdict;                  /* validation result for new messages */
     int dial_failed[16], stream_failed[16], connected_events, disconnected_events, published, peer_topics;
     uint64_t last_status;
+    partial_rec partials[MAX_PARTIALS];
+    int npartials;
+    uint64_t pp_peer[MAX_PEERS], pp_flags[MAX_PEERS];  /* the last PARTIAL_PEERS */
+    int pp_count, pp_seen;
+    uint64_t pg_peer[MAX_PEERS];                        /* every peer of PARTIAL_GOSSIP */
+    int pg_count, pg_seen;
 } node;
 
 static node nodes[MAX_NODES];
@@ -186,6 +199,7 @@ typedef struct {
     int clone;                         /* 1 + the index of a node whose key this node uses, or 0 */
     int v11;                           /* 1: gossipsub v1.1 only */
     int no_idontwant;                  /* 1: no IDONTWANT sent, none heard */
+    int partial;                       /* 1: gossipsub v1.3 and the Partial Messages extension */
 } node_opts;
 
 typedef struct {
@@ -275,6 +289,8 @@ static void config_for(config_rec *cfg, int index, const node_opts *o) {
     c->dontwant_ttl = 3;                                    /* IDontWantMessageTTL */
     c->max_idontwant_messages = 1000;                       /* MaxIDontWantMessages */
     c->max_idontwant_length = 10;                           /* MaxIDontWantLength */
+    c->gossipsub_v13 = (uint64_t)o->partial;
+    c->partial_messages = (uint64_t)o->partial;
 }
 
 static void make_node(int index, const node_opts *o) {
@@ -586,6 +602,46 @@ static void app_action(int i, uint8_t *p) {
     }
     case ACT_PUBLISHED: n->published++; break;
     case ACT_PEER_TOPIC: n->peer_topics += ((act_peer_topic *)p)->subscribed ? 1 : -1; break;
+    case ACT_PARTIAL: {
+        act_partial *a = (act_partial *)p;
+        if (n->npartials >= MAX_PARTIALS) break;
+        partial_rec *r = &n->partials[n->npartials++];
+        const uint8_t *st = n->state;
+        r->peer = a->peer;
+        r->flags = a->flags;
+        r->tlen = a->topic_len;
+        r->glen = a->group_len;
+        r->mlen = a->meta_len;
+        r->dlen = a->msg_len;
+        memcpy(r->topic, a->topic, a->topic_len < 32 ? a->topic_len : 32);
+        memcpy(r->group, st + a->group_off, a->group_len < 32 ? a->group_len : 32);
+        if (a->meta_len) memcpy(r->meta, st + a->meta_off, a->meta_len < 32 ? a->meta_len : 32);
+        if (a->msg_len) memcpy(r->data, st + a->msg_off, a->msg_len < 64 ? a->msg_len : 64);
+        break;
+    }
+    case ACT_PARTIAL_PEERS: {
+        act_partial_list *a = (act_partial_list *)p;
+        const uint64_t *e = (const uint64_t *)(a->topic + ((a->topic_len + 7) & ~7ull));
+        n->pp_seen++;
+        n->pp_count = 0;
+        for (uint64_t k = 0; k < a->count && k < MAX_PEERS; k++) {
+            n->pp_peer[k] = e[2 * k];
+            n->pp_flags[k] = e[2 * k + 1];
+            n->pp_count++;
+        }
+        break;
+    }
+    case ACT_PARTIAL_GOSSIP: {
+        act_partial_list *a = (act_partial_list *)p;
+        const uint64_t *e = (const uint64_t *)(a->topic + ((a->topic_len + 7) & ~7ull));
+        n->pg_seen++;
+        for (uint64_t k = 0; k < a->count; k++) {
+            int have = 0;
+            for (int m = 0; m < n->pg_count; m++) have |= n->pg_peer[m] == e[k];
+            if (!have && n->pg_count < MAX_PEERS) n->pg_peer[n->pg_count++] = e[k];
+        }
+        break;
+    }
     default: break;
     }
 }
@@ -694,6 +750,74 @@ static void publish_n(int a, const char *topic, const void *msg, size_t ml) {
 
 static void publish(int a, const char *topic, const char *msg) { publish_n(a, topic, msg, strlen(msg)); }
 
+static void partial_subscribe(int a, const char *topic, uint64_t flags) {
+    size_t tl = strlen(topic);
+    ev_partial_subscribe *e = ev_add(&nodes[a], EV_PARTIAL_SUBSCRIBE, sizeof *e + tl);
+    e->flags = flags;
+    e->topic_len = tl;
+    memcpy(e->topic, topic, tl);
+}
+
+static void partial_peers(int a, const char *topic) {
+    size_t tl = strlen(topic);
+    ev_partial_peers *e = ev_add(&nodes[a], EV_PARTIAL_PEERS, sizeof *e + tl);
+    e->topic_len = tl;
+    memcpy(e->topic, topic, tl);
+}
+
+/* PARTIAL_SEND from node a to its peer node b; NULL or "" leaves a part out. */
+static void partial_send(int a, int b, const char *topic, const char *group, const char *meta, const char *msg) {
+    size_t tl = strlen(topic), gl = strlen(group), ml = meta ? strlen(meta) : 0, dl = msg ? strlen(msg) : 0;
+    size_t ta = (tl + 7) & ~7ul, ga = (gl + 7) & ~7ul, ma = (ml + 7) & ~7ul;
+    ev_partial_send *e = ev_add(&nodes[a], EV_PARTIAL_SEND, sizeof *e + ta + ga + ma + dl);
+    e->peer = peer_handle(a, b);
+    e->topic_len = tl;
+    e->group_len = gl;
+    e->meta_len = ml;
+    e->msg_len = dl;
+    memcpy(e->bytes, topic, tl);
+    memcpy(e->bytes + ta, group, gl);
+    if (ml) memcpy(e->bytes + ta + ga, meta, ml);
+    if (dl) memcpy(e->bytes + ta + ga + ma, msg, dl);
+}
+
+static void partial_score(int a, int b, const char *topic, uint64_t result) {
+    size_t tl = strlen(topic);
+    ev_partial_score *e = ev_add(&nodes[a], EV_PARTIAL_SCORE, sizeof *e + tl);
+    e->peer = peer_handle(a, b);
+    e->result = result;
+    e->topic_len = tl;
+    memcpy(e->topic, topic, tl);
+}
+
+/* The PARTIAL actions node a got from node b with these parts; NULL matches a part left out. */
+static int partials_from(int a, int b, const char *group, const char *meta, const char *msg) {
+    uint64_t h = peer_handle(a, b);
+    int c = 0;
+    for (int k = 0; k < nodes[a].npartials; k++) {
+        partial_rec *r = &nodes[a].partials[k];
+        size_t ml = meta ? strlen(meta) : 0, dl = msg ? strlen(msg) : 0;
+        c += r->peer == h && r->glen == strlen(group) && !memcmp(r->group, group, r->glen) && r->mlen == ml &&
+             !memcmp(r->meta, meta ? meta : "", ml) && r->dlen == dl && !memcmp(r->data, msg ? msg : "", dl);
+    }
+    return c;
+}
+
+/* The flags of node b in the last PARTIAL_PEERS of node a, or -1 when it is not there. */
+static int64_t pp_flags_of(int a, int b) {
+    uint64_t h = peer_handle(a, b);
+    for (int k = 0; k < nodes[a].pp_count; k++)
+        if (nodes[a].pp_peer[k] == h) return (int64_t)nodes[a].pp_flags[k];
+    return -1;
+}
+
+static int pg_has(int a, int b) {
+    uint64_t h = peer_handle(a, b);
+    for (int k = 0; k < nodes[a].pg_count; k++)
+        if (nodes[a].pg_peer[k] == h) return 1;
+    return 0;
+}
+
 /* MESSAGE actions with these bytes, whatever their status. */
 static int seen_with(int a, const char *msg) {
     int c = 0;
@@ -716,7 +840,7 @@ static int new_with(int a, const char *msg) {
 /* Config checks: every out-of-range field gives INVALID_CONFIG; a short state gives BUFFER_TOO_SMALL. */
 static void s_config(void) {
     config_rec cfg, bad;
-    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     config_for(&cfg, 0, &o);
     uint64_t size = 0;
     CHECK(call(F_STATE_SIZE, &cfg, &size, 0, 0, 0, 0) == LIBP2P_OK, "valid config");
@@ -745,6 +869,10 @@ static void s_config(void) {
     BAD(bad.c.gossipsub_v12 = 2);
     BAD(bad.c.dontwant_slots = 4097);
     BAD(bad.c.dontwant_ttl = 0);
+    BAD(bad.c.gossipsub_v13 = 2);
+    BAD((bad.c.gossipsub_v13 = 1, bad.c.gossipsub_v12 = 0));
+    BAD(bad.c.partial_messages = 2);
+    BAD(bad.c.partial_messages = 1);
     BAD(bad.c.protocols_count = 65);
     BAD(bad.p[0].len = 0);
     BAD(bad.p[1].bytes[3] = '\n');
@@ -767,7 +895,7 @@ static void s_config(void) {
 
 /* Two nodes connect, open a stream with a fallback protocol, echo, half-close, then disconnect. */
 static void connect_pair(int ka, int kb, uint64_t ma, uint64_t mb) {
-    node_opts oa = {ka, ma, 0, 0, 0, 0, 0, 0, 0, 0, 0}, ob = {kb, mb, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    node_opts oa = {ka, ma, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, ob = {kb, mb, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     make_node(0, &oa);
     make_node(1, &ob);
     dial(0, 1, 1);
@@ -808,7 +936,7 @@ static void s_mplex_first(void) { connect_pair(LIBP2P_KEY_ED25519, LIBP2P_KEY_SE
 
 /* No shared muxer: the dial fails in the upgrade, and no node reports a peer. */
 static void s_no_muxer(void) {
-    node_opts oa = {LIBP2P_KEY_ED25519, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0}, ob = {LIBP2P_KEY_ED25519, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    node_opts oa = {LIBP2P_KEY_ED25519, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, ob = {LIBP2P_KEY_ED25519, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     make_node(0, &oa);
     make_node(1, &ob);
     dial(0, 1, 1);
@@ -819,7 +947,7 @@ static void s_no_muxer(void) {
 
 /* The dialled node is not the expected peer: DIAL_FAILED with reason PEER_ID. */
 static void s_peer_id(void) {
-    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     make_node(0, &o);
     make_node(1, &o);
     make_node(2, &o);
@@ -831,7 +959,7 @@ static void s_peer_id(void) {
 
 /* Refused protocols, a reset, and 1 MiB through each muxer's flow control. */
 static void streams_on(uint64_t muxers) {
-    node_opts o = {LIBP2P_KEY_ED25519, muxers, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    node_opts o = {LIBP2P_KEY_ED25519, muxers, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     make_node(0, &o);
     make_node(1, &o);
     dial(0, 1, 1);
@@ -869,7 +997,7 @@ static void s_streams_mplex(void) { streams_on(2); }
 
 /* Timeouts: an unanswered dial gives CONNECT; a peer that never answers gives HANDSHAKE. */
 static void s_timeout(void) {
-    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     make_node(0, &o);
     make_node(1, &o);
     make_node(2, &o);
@@ -884,7 +1012,7 @@ static void s_timeout(void) {
 
 /* Garbage bytes at a listener and at a dialer close the connection; nothing breaks. */
 static void s_garbage(void) {
-    node_opts o = {LIBP2P_KEY_SECP256K1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    node_opts o = {LIBP2P_KEY_SECP256K1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     make_node(0, &o);
     make_node(1, &o);
     nodes[1].dead = 1;                                /* node 1's core never answers; the runner sends garbage */
@@ -905,7 +1033,7 @@ static void s_garbage(void) {
 
 /* Malformed events and short buffers: an error status, nothing accepted, the state unchanged. */
 static void s_errors(void) {
-    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     make_node(0, &o);
     node *n = &nodes[0];
     uint8_t *before = xmalloc(n->state_size);
@@ -951,7 +1079,7 @@ static void s_errors(void) {
 
 /* Both nodes dial each other at once: one connection stays, each side sees one peer. */
 static void s_simultaneous(void) {
-    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     make_node(0, &o);
     make_node(1, &o);
     dial(0, 1, 1);
@@ -966,7 +1094,7 @@ static void s_simultaneous(void) {
 
 /* A node with room for 2 connections refuses the third. */
 static void s_limits(void) {
-    node_opts small = {LIBP2P_KEY_ED25519, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0}, o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    node_opts small = {LIBP2P_KEY_ED25519, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0}, o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     make_node(0, &small);
     for (int i = 1; i <= 3; i++) make_node(i, &o);
     for (int i = 1; i <= 3; i++) {
@@ -980,7 +1108,7 @@ static void s_limits(void) {
 
 /* Six nodes in a graph: every message reaches every node once; a rejecting node does not forward. */
 static void gossip_on(uint64_t d, uint64_t d_low, uint64_t d_high, uint64_t d_lazy) {
-    node_opts o = {LIBP2P_KEY_SECP256K1, 0, 0, d, d_low, d_high, d_lazy, 0, 0, 0, 0};
+    node_opts o = {LIBP2P_KEY_SECP256K1, 0, 0, d, d_low, d_high, d_lazy, 0, 0, 0, 0, 0};
     for (int i = 0; i < 6; i++) make_node(i, &o);
     static const int edges[][2] = {{0, 1}, {0, 2}, {1, 2}, {1, 3}, {2, 4}, {3, 4}, {3, 5}, {4, 5}};
     for (size_t k = 0; k < sizeof edges / sizeof edges[0]; k++) dial(edges[k][0], edges[k][1], edges[k][1]);
@@ -1022,7 +1150,7 @@ static void s_gossip(void) { gossip_on(0, 0, 0, 0); }
  */
 static void s_secondary(void) {
     const char *t = "/eth2/00000000/beacon_block/ssz_snappy";
-    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, c = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0};
+    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, c = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0};
     make_node(0, &o);
     make_node(1, &o);
     make_node(2, &c);
@@ -1071,7 +1199,7 @@ static void topic_params(int a, const char *topic) {
  */
 static void s_scoring(void) {
     const char *t = "/eth2/00000000/voluntary_exit/ssz_snappy";
-    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0};
+    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0};
     for (int i = 0; i < 3; i++) make_node(i, &o);
     dial(0, 1, 1);
     dial(0, 2, 2);
@@ -1130,7 +1258,7 @@ static int new_tagged(int a, const char *tag) {
  */
 static void idontwant_round(int no_idontwant, int v11_node, int *dups) {
     const char *t = "/eth2/00000000/blob_sidecar_0/ssz_snappy";
-    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 3, 2, 4, 0, 0, 0, 0, no_idontwant}, old = o;
+    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 3, 2, 4, 0, 0, 0, 0, no_idontwant, 0}, old = o;
     old.v11 = 1;
     for (int i = 0; i < 4; i++) make_node(i, i == v11_node ? &old : &o);
     for (int a = 0; a < 4; a++)
@@ -1171,8 +1299,116 @@ static void s_idontwant(void) {
     fnv(&mixed, sizeof mixed);
 }
 
+/*
+ * gossipsub v1.3 and the Partial Messages extension. Node 0 dials nodes 1, 2
+ * and 3. Nodes 0 and 1 want partial messages of the topic, node 2 only sends
+ * them, node 3 speaks gossipsub v1.2 only. Node 0 lists nodes 1 and 2 with
+ * their flags, and node 3 not; node 1 gets data and metadata, node 2 the
+ * metadata only, node 3 nothing; each PARTIAL has the flags of its sender.
+ * Full messages of the topic go around node 1; a large one from node 3 gets
+ * no IDONTWANT from node 0 to its partial peers. On a topic node 0 does not
+ * subscribe to, PARTIAL_PEERS lists the fanout peer that wants partial
+ * messages. New flags of node 2 and the leaving of node 1 change the list.
+ * A node without the extension refuses PARTIAL_SUBSCRIBE with flags. Then
+ * node 4 (D 1) dials nodes 5 and 6, which want partial messages: the one
+ * outside its mesh comes in PARTIAL_GOSSIP at heartbeats.
+ */
+static void s_partial(void) {
+    const char *t = "/eth2/00000000/data_column_sidecar_0/ssz_snappy";
+    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, old = o;
+    old.partial = 0;
+    for (int i = 0; i < 4; i++) make_node(i, i == 3 ? &old : &o);
+    for (int b = 1; b < 4; b++) dial(0, b, b);
+    run(80, 10, 1);
+    partial_subscribe(0, t, PARTIAL_REQUESTS);
+    partial_subscribe(1, t, PARTIAL_REQUESTS);
+    partial_subscribe(2, t, PARTIAL_SUPPORTS);
+    topic_event(3, EV_SUBSCRIBE, t);
+    run(40, 100, 0);
+    partial_peers(0, t);
+    partial_peers(1, t);
+    partial_peers(3, t);
+    run(4, 10, 1);
+    CHECK(nodes[0].pp_seen == 1 && nodes[0].pp_count == 2, "node 0 lists %d peers", nodes[0].pp_count);
+    CHECK(pp_flags_of(0, 1) == (PARTIAL_REQUESTS | PARTIAL_SUPPORTS), "node 1 flags %lld", (long long)pp_flags_of(0, 1));
+    CHECK(pp_flags_of(0, 2) == PARTIAL_SUPPORTS, "node 2 flags %lld", (long long)pp_flags_of(0, 2));
+    CHECK(pp_flags_of(0, 3) == -1, "node 3 listed");
+    CHECK(nodes[1].pp_count == 1 && pp_flags_of(1, 0) == (PARTIAL_REQUESTS | PARTIAL_SUPPORTS), "node 1 lists node 0");
+    CHECK(nodes[3].pp_seen == 1 && nodes[3].pp_count == 0, "node 3 lists %d peers", nodes[3].pp_count);
+    partial_send(0, 1, t, "group-1", "meta-1", "cells-1");
+    partial_send(0, 2, t, "group-1", "meta-2", "cells-2");
+    partial_send(0, 3, t, "group-1", "meta-3", "cells-3");
+    partial_send(1, 0, t, "group-1", NULL, "cells-4");
+    partial_send(0, 1, t, "", "", NULL);              /* nothing to send */
+    run(20, 10, 1);
+    CHECK(partials_from(1, 0, "group-1", "meta-1", "cells-1") == 1, "node 1 data and metadata");
+    CHECK(partials_from(2, 0, "group-1", "meta-2", NULL) == 1, "node 2 metadata only");
+    CHECK(nodes[3].npartials == 0, "node 3 got %d", nodes[3].npartials);
+    CHECK(partials_from(0, 1, "group-1", NULL, "cells-4") == 1, "node 0 data only");
+    CHECK(nodes[1].npartials == 1 && nodes[0].npartials == 1, "extra partials %d %d", nodes[1].npartials,
+          nodes[0].npartials);
+    CHECK(nodes[1].partials[0].flags == (PARTIAL_REQUESTS | PARTIAL_SUPPORTS) &&
+              nodes[2].partials[0].flags == (PARTIAL_REQUESTS | PARTIAL_SUPPORTS) &&
+              nodes[0].partials[0].flags == (PARTIAL_REQUESTS | PARTIAL_SUPPORTS),
+          "flags of the senders");
+    partial_score(0, 1, t, LIBP2P_ACCEPT);
+    partial_score(0, 2, t, LIBP2P_REJECT);
+    publish(0, t, "full-0");
+    run(20, 10, 1);
+    publish(3, t, "full-3");
+    run(20, 10, 1);
+    CHECK(seen_with(1, "full-0") == 0 && seen_with(1, "full-3") == 0, "node 1 got full messages");
+    CHECK(new_with(2, "full-0") == 1 && new_with(3, "full-0") == 1, "full-0 x%d x%d", new_with(2, "full-0"),
+          new_with(3, "full-0"));
+    CHECK(new_with(0, "full-3") == 1 && new_with(2, "full-3") == 1, "full-3 x%d x%d", new_with(0, "full-3"),
+          new_with(2, "full-3"));
+    static uint8_t big[2048];
+    memset(big, 'c', sizeof big);
+    memcpy(big, "big-3", 5);
+    publish_n(3, t, big, sizeof big);                 /* IDONTWANT from node 0: none to nodes 1 and 2 */
+    run(20, 10, 1);
+    CHECK(new_tagged(0, "big-3") == 1 && new_tagged(1, "big-3") == 0 && new_tagged(2, "big-3") == 1, "big-3 x%d x%d x%d",
+          new_tagged(0, "big-3"), new_tagged(1, "big-3"), new_tagged(2, "big-3"));
+    const char *t2 = "/eth2/00000000/data_column_sidecar_1/ssz_snappy";
+    partial_subscribe(1, t2, PARTIAL_REQUESTS);
+    partial_subscribe(2, t2, PARTIAL_SUPPORTS);
+    run(20, 10, 1);
+    partial_peers(0, t2);                            /* node 0 does not subscribe: its fanout */
+    run(4, 10, 1);
+    CHECK(nodes[0].pp_count == 1 && pp_flags_of(0, 1) == (PARTIAL_REQUESTS | PARTIAL_SUPPORTS), "fanout of %d",
+          nodes[0].pp_count);
+    partial_subscribe(2, t, PARTIAL_REQUESTS);       /* new flags of a subscribed topic */
+    topic_event(1, EV_UNSUBSCRIBE, t);
+    run(20, 10, 1);
+    partial_peers(0, t);
+    run(4, 10, 1);
+    CHECK(nodes[0].pp_count == 1 && pp_flags_of(0, 2) == (PARTIAL_REQUESTS | PARTIAL_SUPPORTS) && pp_flags_of(0, 1) == -1,
+          "after the changes: %d peers", nodes[0].pp_count);
+    partial_subscribe(3, t, PARTIAL_REQUESTS);        /* no extension: an invalid event */
+    step(3);
+    CHECK(nodes[3].last_status == LIBP2P_INVALID_EVENT, "status %llu", (unsigned long long)nodes[3].last_status);
+    ((uint64_t *)nodes[3].events)[2] = 0;
+    free_nodes();
+
+    node_opts g = {LIBP2P_KEY_ED25519, 0, 0, 1, 1, 1, 2, 0, 0, 0, 0, 1};
+    make_node(4, &g);
+    make_node(5, &o);
+    make_node(6, &o);
+    dial(4, 5, 5);
+    dial(4, 6, 6);
+    run(80, 10, 1);
+    for (int i = 4; i < 7; i++) partial_subscribe(i, t, PARTIAL_REQUESTS);
+    run(40, 100, 0);
+    partial_peers(4, t);
+    run(4, 10, 1);
+    CHECK(nodes[4].pp_count == 1, "node 4 mesh of %d", nodes[4].pp_count);
+    int mesh = pp_flags_of(4, 5) >= 0 ? 5 : 6, other = 11 - mesh;
+    CHECK(nodes[4].pg_seen > 0 && nodes[4].pg_count == 1 && pg_has(4, other), "node 4 gossip %d %d",
+          nodes[4].pg_seen, nodes[4].pg_count);
+}
+
 static const scenario_rec SCENARIOS[] = {
-    {"config", s_config, 0x0b647a578e62468eull},
+    {"config", s_config, 0x142bdebb1cf81fdfull},
     {"yamux", s_yamux, 0xe787b23a61e8b42full},
     {"mplex", s_mplex, 0x00807cdbc0cdadbbull},
     {"fallback", s_fallback, 0x228a1d4b2ba9c0b8ull},
@@ -1191,6 +1427,7 @@ static const scenario_rec SCENARIOS[] = {
     {"secondary", s_secondary, 0x0a01c75c293f3cd1ull},
     {"scoring", s_scoring, 0x136a493f52e41608ull},
     {"idontwant", s_idontwant, 0x75cf64a916ab9726ull},
+    {"partial", s_partial, 0x5a3f172c5cd099a9ull},
 };
 
 int main(int argc, char **argv) {

@@ -1,9 +1,11 @@
 /*
- * gossipsub v1.1 of the x86-64 core (/meshsub/1.1.0, StrictNoSign):
- * topics, the seen cache, the message cache, messages waiting for the
- * application, IWANT promises, RPCs in and out, and the events of the
- * application. The heartbeat and scores are in heartbeat.s and score.s.
- * Included by libp2p.s.
+ * gossipsub of the x86-64 core (/meshsub/1.1.0 with StrictNoSign, the
+ * IDONTWANT of /meshsub/1.2.0, the Extensions control message of
+ * /meshsub/1.3.0 and the Partial Messages extension): topics, the seen
+ * cache, the message cache, messages waiting for the application, IWANT
+ * promises, RPCs in and out, and the events of the application. The
+ * heartbeat and scores are in heartbeat.s and score.s. Included by
+ * libp2p.s.
  */
 
 /* ---------------------------------------------------------------- Tables */
@@ -892,8 +894,8 @@ END_FUNCTION libp2p_pb_head
  * libp2p_gs_rpc(peer, inner, inner size, field) -> rax the place for inner size
  * bytes, after the varint length of the RPC and the head of its field; rdx
  * the chunk (libp2p_gs_push sends it). rax = 0 when the heap is full.
- * The RPC is one field (subscriptions 1, publish 2 or control 3) of
- * inner size bytes.
+ * The RPC is one field (subscriptions 1, publish 2, control 3 or partial
+ * 10) of inner size bytes.
  * rbx peer, r12 inner size, r13 field, X23 the RPC size, X24 the chunk.
  */
 LOCAL_FUNCTION libp2p_gs_rpc
@@ -924,16 +926,33 @@ LOCAL_FUNCTION libp2p_gs_rpc
 9:  LEAVE   0
 END_FUNCTION libp2p_gs_rpc
 
-/* libp2p_gs_send_sub(peer, topic, subscribe): an RPC with one SubOpts. rbx peer, rbp topic, r12 subscribe, X23 chunk. */
+/*
+ * libp2p_gs_send_sub(peer, topic, subscribe): an RPC with one SubOpts:
+ * subscribe (1) and topicid (2); for a subscription, requestsPartial (3) and
+ * supportsSendingPartial (4) when our partial flags of the topic have them.
+ * rbx peer, rbp topic, r12 subscribe, r13 flags, X23 chunk.
+ */
 LOCAL_FUNCTION libp2p_gs_send_sub
     ENTER   0
     mov     %rdi, %rbx
     mov     %rsi, %rbp
     mov     %rdx, %r12
-    mov     $2, %edi
+    xor     %r13d, %r13d
+    test    %r12, %r12
+    jz      1f
+    mov     T_FLAGS(%rbp), %r13
+    shr     $2, %r13
+    and     $3, %r13d                       /* LIBP2P_PARTIAL_* */
+1:  mov     $2, %edi
     mov     T_LEN(%rbp), %rsi
     call    libp2p_pb_size
     lea     2(%rax), %rdx                   /* subscribe (field 1, a varint 0 or 1), topicid (field 2) */
+    mov     %r13, %rax                      /* 2 bytes for each partial field */
+    and     $1, %eax
+    lea     (%rdx,%rax,2), %rdx
+    mov     %r13, %rax
+    shr     $1, %rax
+    lea     (%rdx,%rax,2), %rdx
     mov     %rbx, %rdi
     mov     $1, %ecx
     call    libp2p_gs_rpc
@@ -947,11 +966,129 @@ LOCAL_FUNCTION libp2p_gs_send_sub
     lea     T_NAME(%rbp), %rdx
     mov     T_LEN(%rbp), %rcx
     call    libp2p_pb_bytes
-    mov     %rbx, %rdi
+    test    $1, %r13
+    jz      2f
+    movw    $0x0118, (%rax)                 /* requestsPartial: true */
+    add     $2, %rax
+2:  test    $2, %r13
+    jz      3f
+    movw    $0x0120, (%rax)                 /* supportsSendingPartial: true */
+3:  mov     %rbx, %rdi
     mov     X23(%rsp), %rsi
     call    libp2p_gs_push
 9:  LEAVE   0
 END_FUNCTION libp2p_gs_send_sub
+
+/*
+ * libp2p_gs_send_ext(peer): with partial_messages on, an RPC whose control
+ * holds our Extensions control message (field 6): partialMessages (field
+ * 10) set.
+ * rbx peer.
+ */
+LOCAL_FUNCTION libp2p_gs_send_ext
+    ENTER   0
+    mov     %rdi, %rbx
+    cmpq    $0, (ST_CONFIG + LIBP2P_CFG_PARTIAL_MESSAGES)(%r15)
+    je      9f
+    mov     $4, %edx                        /* ControlMessage: extensions of 2 bytes */
+    mov     $3, %ecx
+    call    libp2p_gs_rpc
+    test    %rax, %rax
+    jz      9f
+    movl    $0x01500232, (%rax)             /* field 6, type 2, length 2; field 10, type 0: true */
+    mov     %rbx, %rdi
+    mov     %rdx, %rsi
+    call    libp2p_gs_push
+9:  LEAVE   0
+END_FUNCTION libp2p_gs_send_ext
+
+/*
+ * libp2p_gs_send_partial(peer, event, with message): an RPC with one
+ * PartialMessagesExtension (field 10) from a PARTIAL_SEND event: topicID
+ * (1), groupID (2), partialMessage (3) when with message is 1 and it has
+ * bytes, partsMetadata (4) when it has bytes.
+ * rbx peer, rbp event, r12 with message, r13 inner size, X23 chunk,
+ * X24 topic, X25 group, X26 metadata.
+ */
+LOCAL_FUNCTION libp2p_gs_send_partial
+    ENTER   0
+    mov     %rdi, %rbx
+    mov     %rsi, %rbp
+    mov     %rdx, %r12
+    cmpq    $0, LIBP2P_EV_PSEND_MSG_LEN(%rbp)
+    jne     1f
+    xor     %r12d, %r12d
+1:  lea     LIBP2P_EV_PSEND_BYTES(%rbp), %rax /* each part at a multiple of 8 */
+    mov     %rax, X24(%rsp)
+    mov     LIBP2P_EV_PSEND_TOPIC_LEN(%rbp), %rcx
+    add     $7, %rcx
+    and     $~7, %rcx
+    add     %rcx, %rax
+    mov     %rax, X25(%rsp)
+    mov     LIBP2P_EV_PSEND_GROUP_LEN(%rbp), %rcx
+    add     $7, %rcx
+    and     $~7, %rcx
+    add     %rcx, %rax
+    mov     %rax, X26(%rsp)
+    mov     $1, %edi                        /* the inner size */
+    mov     LIBP2P_EV_PSEND_TOPIC_LEN(%rbp), %rsi
+    call    libp2p_pb_size
+    mov     %rax, %r13
+    mov     $2, %edi
+    mov     LIBP2P_EV_PSEND_GROUP_LEN(%rbp), %rsi
+    call    libp2p_pb_size
+    add     %rax, %r13
+    mov     LIBP2P_EV_PSEND_META_LEN(%rbp), %rsi
+    test    %rsi, %rsi
+    jz      2f
+    mov     $4, %edi
+    call    libp2p_pb_size
+    add     %rax, %r13
+2:  test    %r12, %r12
+    jz      3f
+    mov     $3, %edi
+    mov     LIBP2P_EV_PSEND_MSG_LEN(%rbp), %rsi
+    call    libp2p_pb_size
+    add     %rax, %r13
+3:  mov     %rbx, %rdi
+    mov     %r13, %rdx
+    mov     $10, %ecx
+    call    libp2p_gs_rpc
+    test    %rax, %rax
+    jz      9f
+    mov     %rdx, X23(%rsp)
+    mov     %rax, %rdi
+    mov     $1, %esi
+    mov     X24(%rsp), %rdx
+    mov     LIBP2P_EV_PSEND_TOPIC_LEN(%rbp), %rcx
+    call    libp2p_pb_bytes
+    mov     %rax, %rdi
+    mov     $2, %esi
+    mov     X25(%rsp), %rdx
+    mov     LIBP2P_EV_PSEND_GROUP_LEN(%rbp), %rcx
+    call    libp2p_pb_bytes
+    test    %r12, %r12
+    jz      4f
+    mov     %rax, %rdi
+    mov     LIBP2P_EV_PSEND_META_LEN(%rbp), %rdx
+    add     $7, %rdx
+    and     $~7, %rdx
+    add     X26(%rsp), %rdx                 /* the message */
+    mov     $3, %esi
+    mov     LIBP2P_EV_PSEND_MSG_LEN(%rbp), %rcx
+    call    libp2p_pb_bytes
+4:  mov     LIBP2P_EV_PSEND_META_LEN(%rbp), %rcx
+    test    %rcx, %rcx
+    jz      5f
+    mov     %rax, %rdi
+    mov     $4, %esi
+    mov     X26(%rsp), %rdx
+    call    libp2p_pb_bytes
+5:  mov     %rbx, %rdi
+    mov     X23(%rsp), %rsi
+    call    libp2p_gs_push
+9:  LEAVE   0
+END_FUNCTION libp2p_gs_send_partial
 
 /*
  * libp2p_gs_send_msg(peer, topic, data, n): an RPC that publishes one message:
@@ -1161,7 +1298,8 @@ END_FUNCTION libp2p_gs_send_ids
 /*
  * libp2p_gs_idontwant(pending): a new message of idontwant_threshold bytes
  * or more: IDONTWANT with its ID, at once, to each mesh peer of its topic
- * that speaks /meshsub/1.2.0, except the peer that sent it.
+ * that speaks /meshsub/1.2.0, except the peer that sent it and the peers
+ * that send us partial messages of the topic (libp2p_sends_partial).
  * rbx pending, rbp list, r12 count, r13 i.
  */
 LOCAL_FUNCTION libp2p_gs_idontwant
@@ -1191,6 +1329,11 @@ LOCAL_FUNCTION libp2p_gs_idontwant
     movl    (%rbp,%r13,4), %edi
     cmp     PD_PEER(%rbx), %rdi
     je      2f
+    mov     PD_TOPIC(%rbx), %rsi
+    call    libp2p_sends_partial
+    test    %rax, %rax
+    jnz     2f
+    movl    (%rbp,%r13,4), %edi
     call    libp2p_peer_at
     testq   $PF_IDONTWANT, P_FLAGS(%rax)
     jz      2f

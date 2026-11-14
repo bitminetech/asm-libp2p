@@ -360,17 +360,24 @@ END_FUNCTION libp2p_stream_open
 
 /*
  * libp2p_gs_proposal(stream) -> the multistream message of the gossipsub
- * proposal at S_PROP_INDEX: /meshsub/1.2.0 first when gossipsub_v12 is on,
- * then /meshsub/1.1.0. Each is 15 bytes. A leaf.
+ * proposal at S_PROP_INDEX: /meshsub/1.3.0 first when gossipsub_v13 is on,
+ * /meshsub/1.2.0 next when gossipsub_v12 is on, then /meshsub/1.1.0. Each
+ * is 15 bytes. A leaf.
  */
 LOCAL_FUNCTION libp2p_gs_proposal
     UNWIND_END_PROLOGUE
+    mov     S_PROP_INDEX(%rdi), %rcx
+    mov     (ST_CONFIG + LIBP2P_CFG_GOSSIPSUB_V12)(%r15), %rdx
+    add     (ST_CONFIG + LIBP2P_CFG_GOSSIPSUB_V13)(%r15), %rdx /* the index of /meshsub/1.1.0 */
     lea     435b(%rip), %rax
-    cmpq    $0, S_PROP_INDEX(%rdi)
-    jne     1f
-    cmpq    $0, (ST_CONFIG + LIBP2P_CFG_GOSSIPSUB_V12)(%r15)
-    je      1f
+    cmp     %rdx, %rcx
+    jae     1f
     lea     437b(%rip), %rax
+    test    %rcx, %rcx
+    jnz     1f
+    cmpq    $0, (ST_CONFIG + LIBP2P_CFG_GOSSIPSUB_V13)(%r15)
+    je      1f
+    lea     438b(%rip), %rax
 1:  ret
 END_FUNCTION libp2p_gs_proposal
 
@@ -689,6 +696,15 @@ LOCAL_FUNCTION libp2p_stream_ms
     call    libp2p_ms_is
     lea     437b(%rip), %r12
     test    %rax, %rax
+    jnz     41f
+    cmpq    $0, (ST_CONFIG + LIBP2P_CFG_GOSSIPSUB_V13)(%r15)
+    je      50f
+    lea     S_MS_STATE(%rbx), %rdi
+    lea     438b(%rip), %rsi
+    mov     $15, %edx
+    call    libp2p_ms_is
+    lea     438b(%rip), %r12
+    test    %rax, %rax
     jz      50f
 41: mov     %rbx, %rdi                      /* gossipsub: echo the version */
     mov     %r12, %rsi
@@ -975,8 +991,8 @@ END_FUNCTION libp2p_observed
 /*
  * libp2p_identify(stream): the Identify message on a stream the peer opened
  * with /ipfs/id/1.0.0, varint-length prefixed, then FIN: publicKey (1),
- * observedAddr (4), protocols (3): identify, gossipsub (/meshsub/1.2.0 too
- * when gossipsub_v12 is on) and the application protocols, then
+ * observedAddr (4), protocols (3): identify, gossipsub (/meshsub/1.3.0 and
+ * /meshsub/1.2.0 too when they are on) and the application protocols, then
  * protocolVersion (5) and agentVersion (6) when the config has them.
  * rbx stream, rbp size, r12 key length, r13 observed length, X23 position,
  * X24 chunk, X25 protocol, X26 protocols left. Key at 32(%rsp), observed
@@ -1011,7 +1027,9 @@ LOCAL_FUNCTION libp2p_identify
     mov     $14, %esi
     call    libp2p_pb_size
     lea     (%rbp,%rax,2), %rbp             /* identify and gossipsub: 14 bytes each */
-    imul    (ST_CONFIG + LIBP2P_CFG_GOSSIPSUB_V12)(%r15), %rax    /* and /meshsub/1.2.0 */
+    mov     (ST_CONFIG + LIBP2P_CFG_GOSSIPSUB_V12)(%r15), %rcx    /* and /meshsub/1.2.0 */
+    add     (ST_CONFIG + LIBP2P_CFG_GOSSIPSUB_V13)(%r15), %rcx    /* and /meshsub/1.3.0 */
+    imul    %rcx, %rax
     add     %rax, %rbp
     TABLE   %rax, ST_PROTO_OFF
     mov     %rax, X25(%rsp)
@@ -1065,7 +1083,14 @@ LOCAL_FUNCTION libp2p_identify
     mov     $14, %ecx
     call    libp2p_pb_bytes
     mov     %rax, %rdi
-    cmpq    $0, (ST_CONFIG + LIBP2P_CFG_GOSSIPSUB_V12)(%r15)
+    cmpq    $0, (ST_CONFIG + LIBP2P_CFG_GOSSIPSUB_V13)(%r15)
+    je      40f
+    mov     $3, %esi
+    lea     438b(%rip), %rdx
+    mov     $14, %ecx
+    call    libp2p_pb_bytes
+    mov     %rax, %rdi
+40: cmpq    $0, (ST_CONFIG + LIBP2P_CFG_GOSSIPSUB_V12)(%r15)
     je      41f
     mov     $3, %esi
     lea     437b(%rip), %rdx

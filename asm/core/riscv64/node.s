@@ -109,9 +109,17 @@ LOCAL_FUNCTION libp2p_layout
     beqz    t1, 11f
     ld      t1, LIBP2P_CFG_DONTWANT_TTL(s1)
     beqz    t1, 80f
+11: ld      t1, LIBP2P_CFG_GOSSIPSUB_V13(s1)   # gossipsub v1.3: needs v1.2
+    RANGE   t1, 0, 1, 80f
+    beqz    t1, 12f
+    ld      t2, LIBP2P_CFG_GOSSIPSUB_V12(s1)
+    beqz    t2, 80f
+12: ld      t2, LIBP2P_CFG_PARTIAL_MESSAGES(s1) # partial messages: need v1.3
+    RANGE   t2, 0, 1, 80f
+    bltu    t1, t2, 80f
 
     /* The protocols part. */
-11: ld      s8, LIBP2P_CFG_PROTOCOLS_COUNT(s1)
+    ld      s8, LIBP2P_CFG_PROTOCOLS_COUNT(s1)
     RANGE   s8, 0, 64, 80f
     beqz    s8, 3f
     ld      t1, LIBP2P_CFG_PROTOCOLS(s1)
@@ -482,10 +490,58 @@ LOCAL_FUNCTION libp2p_check_event
     RANGE   t0, 1, 3, 80f
     j       70f
 9:  li      t0, LIBP2P_EVENT_TOPIC_PARAMS
-    bne     s3, t0, 70f
+    bne     s3, t0, 10f
     ld      t0, LIBP2P_EV_TP_TOPIC_LEN(s1)
     RANGE   t0, 1, LIBP2P_MAX_TOPIC, 80f
     addi    t1, s2, -LIBP2P_EV_TP_TOPIC
+    bltu    t1, t0, 80f
+    j       70f
+10: li      t0, LIBP2P_EVENT_PARTIAL_SUBSCRIBE
+    bne     s3, t0, 11f
+    ld      t0, LIBP2P_EV_PS_FLAGS(s1)
+    RANGE   t0, 0, 3, 80f
+    beqz    t0, 101f
+    CFG     t1, LIBP2P_CFG_PARTIAL_MESSAGES
+    beqz    t1, 80f
+101: ld     t0, LIBP2P_EV_PS_TOPIC_LEN(s1)
+    RANGE   t0, 1, LIBP2P_MAX_TOPIC, 80f
+    addi    t1, s2, -LIBP2P_EV_PS_TOPIC
+    bltu    t1, t0, 80f
+    j       70f
+11: li      t0, LIBP2P_EVENT_PARTIAL_PEERS
+    bne     s3, t0, 12f
+    ld      t0, LIBP2P_EV_PP_TOPIC_LEN(s1)
+    RANGE   t0, 1, LIBP2P_MAX_TOPIC, 80f
+    addi    t1, s2, -LIBP2P_EV_PP_TOPIC
+    bltu    t1, t0, 80f
+    j       70f
+12: li      t0, LIBP2P_EVENT_PARTIAL_SEND
+    bne     s3, t0, 13f
+    ld      t0, LIBP2P_EV_PSEND_TOPIC_LEN(s1)
+    RANGE   t0, 1, LIBP2P_MAX_TOPIC, 80f
+    ALIGN8  t0
+    CFG     t2, LIBP2P_CFG_MAX_RPC
+    ld      t1, LIBP2P_EV_PSEND_GROUP_LEN(s1)
+    bltu    t2, t1, 80f
+    ALIGN8  t1
+    add     t0, t0, t1
+    ld      t1, LIBP2P_EV_PSEND_META_LEN(s1)
+    bltu    t2, t1, 80f
+    ALIGN8  t1
+    add     t0, t0, t1
+    ld      t1, LIBP2P_EV_PSEND_MSG_LEN(s1)
+    bltu    t2, t1, 80f
+    add     t0, t0, t1
+    addi    t0, t0, LIBP2P_EV_PSEND_BYTES
+    bltu    s2, t0, 80f
+    j       70f
+13: li      t0, LIBP2P_EVENT_PARTIAL_SCORE
+    bne     s3, t0, 70f
+    ld      t0, LIBP2P_EV_PSCORE_RESULT(s1)
+    RANGE   t0, 1, 2, 80f
+    ld      t0, LIBP2P_EV_PSCORE_TOPIC_LEN(s1)
+    RANGE   t0, 1, LIBP2P_MAX_TOPIC, 80f
+    addi    t1, s2, -LIBP2P_EV_PSCORE_TOPIC
     bltu    t1, t0, 80f
 70: li      a0, 0
     j       99f
@@ -500,7 +556,8 @@ END_FUNCTION libp2p_check_event
     .hword  LIBP2P_EV_CONN_SIZE, LIBP2P_EV_DIAL_SIZE, LIBP2P_EV_PEER_SIZE, LIBP2P_EV_OPEN_PROTOCOLS
     .hword  LIBP2P_EV_STREAM_DATA, LIBP2P_EV_STREAM_SIZE, LIBP2P_EV_STREAM_SIZE, LIBP2P_EV_TOPIC
     .hword  LIBP2P_EV_TOPIC, LIBP2P_EV_PUB_TOPIC, LIBP2P_EV_MSG_ID_SIZE, LIBP2P_EV_VALIDATION_SIZE
-    .hword  LIBP2P_EV_SCORE_SIZE, LIBP2P_EV_TP_TOPIC
+    .hword  LIBP2P_EV_SCORE_SIZE, LIBP2P_EV_TP_TOPIC, LIBP2P_EV_PS_TOPIC, LIBP2P_EV_PP_TOPIC
+    .hword  LIBP2P_EV_PSEND_BYTES, LIBP2P_EV_PSCORE_TOPIC
     .p2align 2
 
 /* libp2p_check_addr(addr) -> 0 when the family is 4 or 6 and the port below 65536, else 1. A leaf. */
@@ -522,7 +579,8 @@ END_FUNCTION libp2p_check_addr
 /*
  * libp2p_event_room(event) -> the action bytes handling the event may need:
  * 64 + 16 for each received byte, 16384 for an event that can end a
- * connection, else 1024. A leaf.
+ * connection, LIBP2P_ACT_PL_TOPIC + LIBP2P_MAX_TOPIC + 16 for each peer
+ * slot for PARTIAL_PEERS, else 1024. A leaf.
  */
 LOCAL_FUNCTION libp2p_event_room
     UNWIND_END_PROLOGUE
@@ -533,7 +591,13 @@ LOCAL_FUNCTION libp2p_event_room
     slli    a2, a2, 4
     addi    a0, a2, 64
     ret
-1:  li      a3, LIBP2P_EVENT_CLOSED
+1:  li      a3, LIBP2P_EVENT_PARTIAL_PEERS
+    bne     a1, a3, 11f
+    ld      a2, ST_PEER_COUNT(s9)
+    slli    a2, a2, 4
+    addi    a0, a2, (LIBP2P_ACT_PL_TOPIC + LIBP2P_MAX_TOPIC)
+    ret
+11: li      a3, LIBP2P_EVENT_CLOSED
     beq     a1, a3, 2f
     li      a3, LIBP2P_EVENT_DIAL_FAILED
     beq     a1, a3, 2f
@@ -551,7 +615,8 @@ END_FUNCTION libp2p_event_room
  * libp2p_step(state, tick, events, scratch, actions, result) -> status.
  * Checks the scratch size, the action room and every event first; on error
  * nothing changes. Then takes the time (never below the last), reseeds the
- * DRBG and handles events in order while the room for their actions lasts;
+ * DRBG, frees the RPC blocks of the last step's PARTIAL actions, and
+ * handles events in order while the room for their actions lasts;
  * result gets the count handled. Then the timers, the drain of queued
  * bytes into SEND actions, and WAKEUP last.
  * s9 state, s10 scratch, s1 tick, s2 events, s3 actions, s4 result,
@@ -605,6 +670,7 @@ FUNCTION libp2p_step
     sd      zero, LIBP2P_BL_COUNT(s3)
     addi    a0, s1, LIBP2P_TICK_ENTROPY
     call    libp2p_reseed
+    call    libp2p_free_kept
 
     /* The events, while their room lasts. */
     ld      t0, LIBP2P_BL_OFFSET(s2)
@@ -716,10 +782,41 @@ LOCAL_FUNCTION libp2p_event
     call    libp2p_on_app_score
     j       99f
 18: li      t1, 19
-    bne     t0, t1, 99f
+    bne     t0, t1, 19f
     call    libp2p_on_topic_params
+    j       99f
+19: li      t1, 20
+    bne     t0, t1, 20f
+    call    libp2p_on_partial_subscribe
+    j       99f
+20: li      t1, 21
+    bne     t0, t1, 21f
+    call    libp2p_on_partial_peers
+    j       99f
+21: li      t1, 22
+    bne     t0, t1, 22f
+    call    libp2p_on_partial_send
+    j       99f
+22: li      t1, 23
+    bne     t0, t1, 99f
+    call    libp2p_on_partial_score
 99: LEAVE   0
 END_FUNCTION libp2p_event
+
+/* libp2p_free_kept(): the RPC blocks on the ST_KEPT_RPC list are freed, and the list is empty. s1 block, s2 next. */
+LOCAL_FUNCTION libp2p_free_kept
+    ENTER   0
+    ld      s1, ST_KEPT_RPC(s9)
+    sd      zero, ST_KEPT_RPC(s9)
+1:  beqz    s1, 9f
+    add     t0, s9, s1
+    ld      s2, (HB_NEXT - HB_HEADER)(t0)
+    mv      a0, s1
+    call    libp2p_heap_free
+    mv      s1, s2
+    j       1b
+9:  LEAVE   0
+END_FUNCTION libp2p_free_kept
 
 /* ---------------------------------------------------------------- Timers */
 

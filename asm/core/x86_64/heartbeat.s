@@ -555,9 +555,13 @@ END_FUNCTION libp2p_fanout_maintain
  * libp2p_emit_gossip(topic index): the IDs of the topic's messages in the last
  * mcache_gossip windows (at most max_ihave_length, chosen at random) go as
  * IHAVE to max(D_lazy, gossip_factor x candidates) peers at random that are
- * not in the mesh or fanout and are at or above gossip_threshold.
- * rbx topic index, rbp topic, r12 IDs, r13 ID count, X23 i, X24 list or
- * the count left, X25 peers, X26 the first window.
+ * not in the mesh or fanout and are at or above gossip_threshold. Of those
+ * peers, the ones that get partial messages of the topic from us
+ * (libp2p_wants_partial) get no IHAVE: PARTIAL_GOSSIP lists them for the
+ * application, also when there are no IDs.
+ * rbx topic index, rbp topic, r12 IDs then the list of the action, r13 ID
+ * count, X23 i, X24 list or the count left, X25 peers then the action,
+ * X26 the first window then the partial count.
  */
 LOCAL_FUNCTION libp2p_emit_gossip
     ENTER   0
@@ -604,8 +608,10 @@ LOCAL_FUNCTION libp2p_emit_gossip
 3:  incq    X23(%rsp)
     jmp     2b
 4:  test    %r13, %r13
+    jnz     40f
+    testq   $TF_SUPPORTS_PARTIAL, T_FLAGS(%rbp) /* no IDs: partial gossip only */
     jz      9f
-    mov     (ST_CONFIG + LIBP2P_CFG_MAX_IHAVE_LENGTH)(%r15), %rax   /* at most max_ihave_length of them, at random */
+40: mov     (ST_CONFIG + LIBP2P_CFG_MAX_IHAVE_LENGTH)(%r15), %rax   /* at most max_ihave_length of them, at random */
     cmp     %rax, %r13
     jbe     5f
     mov     %rax, X23(%rsp)
@@ -658,9 +664,26 @@ LOCAL_FUNCTION libp2p_emit_gossip
     cmovae  %rcx, %rax
     mov     %rax, X25(%rsp)
     movq    $0, X23(%rsp)
+    movq    $0, X26(%rsp)
 6:  mov     X23(%rsp), %rax
     cmp     X25(%rsp), %rax
-    jae     9f
+    jae     7f
+    mov     X24(%rsp), %rcx
+    movl    (%rcx,%rax,4), %edi
+    mov     %rbx, %rsi
+    call    libp2p_wants_partial
+    test    %rax, %rax
+    jz      61f
+    mov     X23(%rsp), %rax                 /* partial gossip: to the front of the list */
+    mov     X24(%rsp), %rcx
+    movl    (%rcx,%rax,4), %edx
+    mov     X26(%rsp), %rax
+    movl    %edx, (%rcx,%rax,4)
+    incq    X26(%rsp)
+    jmp     62f
+61: test    %r13, %r13
+    jz      62f
+    mov     X23(%rsp), %rax
     mov     X24(%rsp), %rcx
     movl    (%rcx,%rax,4), %edi
     call    libp2p_peer_at
@@ -670,7 +693,44 @@ LOCAL_FUNCTION libp2p_emit_gossip
     mov     %r13, %rcx
     mov     $1, %r8d
     call    libp2p_gs_send_ids
-    incq    X23(%rsp)
+62: incq    X23(%rsp)
     jmp     6b
+7:  cmpq    $0, X26(%rsp)                   /* PARTIAL_GOSSIP */
+    je      9f
+    mov     T_LEN(%rbp), %rax
+    add     $(LIBP2P_ACT_PL_TOPIC + 7), %rax
+    and     $~7, %rax
+    mov     %rax, X23(%rsp)
+    mov     X26(%rsp), %rsi
+    lea     (%rax,%rsi,8), %rsi
+    mov     $LIBP2P_ACTION_PARTIAL_GOSSIP, %edi
+    call    libp2p_action
+    test    %rax, %rax
+    jz      9f
+    mov     %rax, X25(%rsp)
+    mov     T_LEN(%rbp), %rdx
+    mov     %rdx, LIBP2P_ACT_PL_TOPIC_LEN(%rax)
+    mov     X26(%rsp), %rcx
+    mov     %rcx, LIBP2P_ACT_PL_COUNT(%rax)
+    lea     LIBP2P_ACT_PL_TOPIC(%rax), %rdi
+    lea     T_NAME(%rbp), %rsi
+    call    libp2p_copy
+    mov     X25(%rsp), %r12
+    add     X23(%rsp), %r12                 /* the list of the action */
+    movq    $0, X23(%rsp)
+8:  mov     X23(%rsp), %rax
+    cmp     X26(%rsp), %rax
+    jae     9f
+    mov     X24(%rsp), %rcx
+    movl    (%rcx,%rax,4), %edi
+    call    libp2p_peer_at
+    mov     %rax, %rdx
+    mov     $ST_PEER_OFF, %edi
+    mov     $P_SIZE, %esi
+    call    libp2p_handle
+    mov     X23(%rsp), %rcx
+    mov     %rax, (%r12,%rcx,8)
+    incq    X23(%rsp)
+    jmp     8b
 9:  LEAVE   0
 END_FUNCTION libp2p_emit_gossip

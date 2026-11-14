@@ -43,7 +43,7 @@
 .set LIBP2P_RX_SIZE, 65552              /* the receive buffer of a connection: one Noise message */
 .set LIBP2P_ACTIONS_MIN, 1056768        /* action room libp2p_step needs: 4096 + 64 + 16 x 65536, rounded up */
 .set LIBP2P_SCRATCH_SIZE, 594536       /* bytes of the scratch of libp2p_step */
-.set LIBP2P_STATE_VERSION, 2
+.set LIBP2P_STATE_VERSION, 3
 
 /* ---------------------------------------------------------------- Address */
 
@@ -133,7 +133,10 @@
 .set LIBP2P_CFG_DONTWANT_TTL, 664       /* heartbeats an ID of IDONTWANT is kept */
 .set LIBP2P_CFG_MAX_IDONTWANT_MESSAGES, 672 /* IDONTWANT messages heard from a peer per heartbeat */
 .set LIBP2P_CFG_MAX_IDONTWANT_LENGTH, 680   /* message IDs taken from one IDONTWANT */
-.set LIBP2P_CFG_FIXED, 688
+/* gossipsub v1.3 */
+.set LIBP2P_CFG_GOSSIPSUB_V13, 688      /* 1: /meshsub/1.3.0 is proposed first and accepted; needs gossipsub_v12 */
+.set LIBP2P_CFG_PARTIAL_MESSAGES, 696   /* 1: the Partial Messages extension; needs gossipsub_v13 */
+.set LIBP2P_CFG_FIXED, 704
 
 /* ProtocolEntry: a protocol ID the node accepts on inbound streams. */
 .set LIBP2P_PROTO_LEN, 0
@@ -196,7 +199,11 @@
 .set LIBP2P_EVENT_VALIDATION, 17        /* handle, result */
 .set LIBP2P_EVENT_APP_SCORE, 18         /* peer, score (f64) */
 .set LIBP2P_EVENT_TOPIC_PARAMS, 19      /* topic length, TopicParams, topic */
-.set LIBP2P_EVENT_LAST, 19
+.set LIBP2P_EVENT_PARTIAL_SUBSCRIBE, 20 /* flags, topic length, topic */
+.set LIBP2P_EVENT_PARTIAL_PEERS, 21     /* topic length, topic */
+.set LIBP2P_EVENT_PARTIAL_SEND, 22      /* peer, topic, group, metadata and message lengths, then their bytes */
+.set LIBP2P_EVENT_PARTIAL_SCORE, 23     /* peer, result, topic length, topic */
+.set LIBP2P_EVENT_LAST, 23
 
 /* Event fields. */
 .set LIBP2P_EV_TOKEN, 16                /* ACCEPTED */
@@ -239,6 +246,25 @@
 .set LIBP2P_EV_TP_TOPIC_LEN, 16         /* TOPIC_PARAMS */
 .set LIBP2P_EV_TP_PARAMS, 24
 .set LIBP2P_EV_TP_TOPIC, 24 + LIBP2P_TP_SIZE
+.set LIBP2P_EV_PS_FLAGS, 16             /* PARTIAL_SUBSCRIBE */
+.set LIBP2P_EV_PS_TOPIC_LEN, 24
+.set LIBP2P_EV_PS_TOPIC, 32
+.set LIBP2P_EV_PP_TOPIC_LEN, 16         /* PARTIAL_PEERS */
+.set LIBP2P_EV_PP_TOPIC, 24
+.set LIBP2P_EV_PSEND_PEER, 16           /* PARTIAL_SEND */
+.set LIBP2P_EV_PSEND_TOPIC_LEN, 24
+.set LIBP2P_EV_PSEND_GROUP_LEN, 32
+.set LIBP2P_EV_PSEND_META_LEN, 40
+.set LIBP2P_EV_PSEND_MSG_LEN, 48
+.set LIBP2P_EV_PSEND_BYTES, 56          /* topic, group, metadata, message: each at a multiple of 8 */
+.set LIBP2P_EV_PSCORE_PEER, 16          /* PARTIAL_SCORE */
+.set LIBP2P_EV_PSCORE_RESULT, 24
+.set LIBP2P_EV_PSCORE_TOPIC_LEN, 32
+.set LIBP2P_EV_PSCORE_TOPIC, 40
+
+/* Flags of PARTIAL_SUBSCRIBE, PARTIAL_PEERS and the Partial Messages extension. */
+.set LIBP2P_PARTIAL_REQUESTS, 1         /* partial messages are wanted on the topic */
+.set LIBP2P_PARTIAL_SUPPORTS, 2         /* partial messages are sent on the topic */
 
 /* Validation results. */
 .set LIBP2P_ACCEPT, 1
@@ -266,6 +292,9 @@
 .set LIBP2P_ACTION_MESSAGE_STATUS, 17   /* handle, status */
 .set LIBP2P_ACTION_PUBLISHED, 18        /* ID length, ID, peers */
 .set LIBP2P_ACTION_PEER_TOPIC, 19       /* peer, subscribed, topic length, topic */
+.set LIBP2P_ACTION_PARTIAL, 20          /* peer, flags, topic length, group, metadata, message, topic */
+.set LIBP2P_ACTION_PARTIAL_PEERS, 21    /* topic length, count, topic, then peer and flags pairs */
+.set LIBP2P_ACTION_PARTIAL_GOSSIP, 22   /* topic length, count, topic, then peers */
 
 /* Action fields. */
 .set LIBP2P_ACT_SIZE, 0
@@ -320,6 +349,19 @@
 .set LIBP2P_ACT_PT_SUBSCRIBED, 24       /* PEER_TOPIC */
 .set LIBP2P_ACT_PT_TOPIC_LEN, 32
 .set LIBP2P_ACT_PT_TOPIC, 40
+.set LIBP2P_ACT_PM_PEER, 16             /* PARTIAL */
+.set LIBP2P_ACT_PM_FLAGS, 24            /* LIBP2P_PARTIAL_* of the peer on the topic */
+.set LIBP2P_ACT_PM_TOPIC_LEN, 32
+.set LIBP2P_ACT_PM_GROUP_OFF, 40
+.set LIBP2P_ACT_PM_GROUP_LEN, 48
+.set LIBP2P_ACT_PM_META_OFF, 56
+.set LIBP2P_ACT_PM_META_LEN, 64
+.set LIBP2P_ACT_PM_MSG_OFF, 72
+.set LIBP2P_ACT_PM_MSG_LEN, 80
+.set LIBP2P_ACT_PM_TOPIC, 88
+.set LIBP2P_ACT_PL_TOPIC_LEN, 16        /* PARTIAL_PEERS, PARTIAL_GOSSIP */
+.set LIBP2P_ACT_PL_COUNT, 24
+.set LIBP2P_ACT_PL_TOPIC, 32            /* then the list, at the next multiple of 8 */
 
 /* MESSAGE_STATUS values. */
 .set LIBP2P_MSG_NEW, 1                  /* judge it and send VALIDATION */

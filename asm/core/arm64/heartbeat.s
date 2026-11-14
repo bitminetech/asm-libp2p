@@ -542,8 +542,12 @@ END_FUNCTION libp2p_fanout_maintain
  * libp2p_emit_gossip(topic index): the IDs of the topic's messages in the last
  * mcache_gossip windows (at most max_ihave_length, chosen at random) go as
  * IHAVE to max(D_lazy, gossip_factor x candidates) peers at random that are
- * not in the mesh or fanout and are at or above gossip_threshold.
- * x19 topic index, x20 topic, x21 IDs, x22 ID count, x23 i, x24 list, x25 count.
+ * not in the mesh or fanout and are at or above gossip_threshold. Of those
+ * peers, the ones that get partial messages of the topic from us
+ * (libp2p_wants_partial) get no IHAVE: PARTIAL_GOSSIP lists them for the
+ * application, also when there are no IDs.
+ * x19 topic index, x20 topic, x21 IDs, then the list of the action, x22 ID
+ * count, x23 i, x24 list, x25 count, then the action, x26 partial count.
  */
 LOCAL_FUNCTION libp2p_emit_gossip
     ENTER   0
@@ -583,8 +587,11 @@ LOCAL_FUNCTION libp2p_emit_gossip
     add     x22, x22, #1
 3:  add     x23, x23, #1
     b       2b
-4:  cbz     x22, 9f
-    CFG     x9, LIBP2P_CFG_MAX_IHAVE_LENGTH /* at most max_ihave_length of them, at random */
+4:  cbnz    x22, 40f
+    ldr     x9, [x20, #T_FLAGS]             /* no IDs: partial gossip only */
+    tst     x9, #TF_SUPPORTS_PARTIAL
+    b.eq    9f
+40: CFG     x9, LIBP2P_CFG_MAX_IHAVE_LENGTH /* at most max_ihave_length of them, at random */
     cmp     x22, x9
     b.ls    5f
     mov     x23, x9
@@ -623,8 +630,18 @@ LOCAL_FUNCTION libp2p_emit_gossip
     cmp     x9, x25
     csel    x25, x9, x25, lo
     mov     x23, #0
+    mov     x26, #0
 6:  cmp     x23, x25
-    b.hs    9f
+    b.hs    7f
+    ldr     w0, [x24, x23, lsl #2]
+    mov     x1, x19
+    bl      libp2p_wants_partial
+    cbz     x0, 61f
+    ldr     w9, [x24, x23, lsl #2]          /* partial gossip: to the front of the list */
+    str     w9, [x24, x26, lsl #2]
+    add     x26, x26, #1
+    b       62f
+61: cbz     x22, 62f
     ldr     w0, [x24, x23, lsl #2]
     bl      libp2p_peer_at
     mov     x1, x20
@@ -632,7 +649,35 @@ LOCAL_FUNCTION libp2p_emit_gossip
     mov     x3, x22
     mov     x4, #1
     bl      libp2p_gs_send_ids
-    add     x23, x23, #1
+62: add     x23, x23, #1
     b       6b
+7:  cbz     x26, 9f                         /* PARTIAL_GOSSIP */
+    ldr     x9, [x20, #T_LEN]
+    add     x9, x9, #(LIBP2P_ACT_PL_TOPIC + 7)
+    and     x23, x9, #~7
+    add     x1, x23, x26, lsl #3
+    mov     x0, #LIBP2P_ACTION_PARTIAL_GOSSIP
+    bl      libp2p_action
+    cbz     x0, 9f
+    mov     x25, x0
+    ldr     x2, [x20, #T_LEN]
+    str     x2, [x25, #LIBP2P_ACT_PL_TOPIC_LEN]
+    str     x26, [x25, #LIBP2P_ACT_PL_COUNT]
+    add     x0, x25, #LIBP2P_ACT_PL_TOPIC
+    add     x1, x20, #T_NAME
+    bl      libp2p_copy
+    add     x21, x25, x23
+    mov     x23, #0
+8:  cmp     x23, x26
+    b.hs    9f
+    ldr     w0, [x24, x23, lsl #2]
+    bl      libp2p_peer_at
+    mov     x2, x0
+    mov     x0, #ST_PEER_OFF
+    mov     x1, #P_SIZE
+    bl      libp2p_handle
+    str     x0, [x21, x23, lsl #3]
+    add     x23, x23, #1
+    b       8b
 9:  LEAVE   0
 END_FUNCTION libp2p_emit_gossip

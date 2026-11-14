@@ -372,17 +372,23 @@ END_FUNCTION libp2p_stream_open
 
 /*
  * libp2p_gs_proposal(stream) -> the multistream message of the gossipsub
- * proposal at S_PROP_INDEX: /meshsub/1.2.0 first when gossipsub_v12 is on,
- * then /meshsub/1.1.0. Each is 15 bytes. A leaf.
+ * proposal at S_PROP_INDEX: /meshsub/1.3.0 first when gossipsub_v13 is on,
+ * /meshsub/1.2.0 next when gossipsub_v12 is on, then /meshsub/1.1.0. Each
+ * is 15 bytes. A leaf.
  */
 LOCAL_FUNCTION libp2p_gs_proposal
     UNWIND_END_PROLOGUE
     ldr     x9, [x0, #S_PROP_INDEX]
     CFG     x10, LIBP2P_CFG_GOSSIPSUB_V12
+    CFG     x11, LIBP2P_CFG_GOSSIPSUB_V13
+    add     x12, x10, x11                   /* the index of /meshsub/1.1.0 */
     adr     x0, 435b
-    cbnz    x9, 1f
-    cbz     x10, 1f
+    cmp     x9, x12
+    b.hs    1f
     adr     x0, 437b
+    cbnz    x9, 1f
+    cbz     x11, 1f
+    adr     x0, 438b
 1:  ret
 END_FUNCTION libp2p_gs_proposal
 
@@ -686,6 +692,14 @@ LOCAL_FUNCTION libp2p_stream_ms
     mov     x2, #15
     bl      libp2p_ms_is
     adr     x21, 437b
+    cbnz    x0, 41f
+    CFG     x9, LIBP2P_CFG_GOSSIPSUB_V13
+    cbz     x9, 50f
+    add     x0, x19, #S_MS_STATE
+    adr     x1, 438b
+    mov     x2, #15
+    bl      libp2p_ms_is
+    adr     x21, 438b
     cbz     x0, 50f
 41: mov     x0, x19                         /* gossipsub: echo the version */
     mov     x1, x21
@@ -977,8 +991,8 @@ END_FUNCTION libp2p_observed
 /*
  * libp2p_identify(stream): the Identify message on a stream the peer opened
  * with /ipfs/id/1.0.0, varint-length prefixed, then FIN: publicKey (1),
- * observedAddr (4), protocols (3): identify, gossipsub (/meshsub/1.2.0 too
- * when gossipsub_v12 is on) and the application protocols, then
+ * observedAddr (4), protocols (3): identify, gossipsub (/meshsub/1.3.0 and
+ * /meshsub/1.2.0 too when they are on) and the application protocols, then
  * protocolVersion (5) and agentVersion (6) when the config has them.
  * x19 stream, x20 size, x21 key length, x22 observed length, x23 position,
  * x24 chunk, x25 protocol, x26 protocols left. Key at sp, observed at sp + 48.
@@ -1012,6 +1026,8 @@ LOCAL_FUNCTION libp2p_identify
     bl      libp2p_pb_size
     add     x20, x20, x0, lsl #1            /* identify and gossipsub: 14 bytes each */
     CFG     x9, LIBP2P_CFG_GOSSIPSUB_V12    /* and /meshsub/1.2.0 */
+    CFG     x10, LIBP2P_CFG_GOSSIPSUB_V13   /* and /meshsub/1.3.0 */
+    add     x9, x9, x10
     madd    x20, x0, x9, x20
     TABLE   x25, ST_PROTO_OFF
     ldr     x26, [x27, #ST_PROTO_COUNT]
@@ -1053,7 +1069,13 @@ LOCAL_FUNCTION libp2p_identify
     adr     x2, 436b
     mov     x3, #14
     bl      libp2p_pb_bytes
-    CFG     x9, LIBP2P_CFG_GOSSIPSUB_V12
+    CFG     x9, LIBP2P_CFG_GOSSIPSUB_V13
+    cbz     x9, 40f
+    mov     x1, #3
+    adr     x2, 438b
+    mov     x3, #14
+    bl      libp2p_pb_bytes
+40: CFG     x9, LIBP2P_CFG_GOSSIPSUB_V12
     cbz     x9, 41f
     mov     x1, #3
     adr     x2, 437b

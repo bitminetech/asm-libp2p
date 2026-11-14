@@ -14,8 +14,11 @@
  * the peers. On each connection it sends a Status request, answers Status,
  * Ping, Metadata and Goodbye requests (phase0 p2p-interface req/resp, as
  * Lantern will), subscribes to the global gossip topics and counts the
- * messages it gets. Messages are reported IGNORE, so the node never
- * forwards them. Each status line and the summary go to stdout.
+ * messages it gets. It speaks gossipsub v1.3 with the Partial Messages
+ * extension, joins the data column subnets 0 to 7 asking for partial
+ * messages, and counts the partial messages and partial peers it sees.
+ * Messages are reported IGNORE, so the node never forwards them. Each
+ * status line and the summary go to stdout.
  *
  * Req/resp lives in this test, not in the library: the library gives
  * streams. Snappy here is test code.
@@ -47,6 +50,8 @@ static const char *TOPICS[] = {
     "sync_committee_contribution_and_proof", "bls_to_execution_change",
 };
 #define NTOPIC (sizeof TOPICS / sizeof TOPICS[0])
+#define NCOLUMN 8                           /* data column subnets, joined with partial messages */
+#define NALL (NTOPIC + NCOLUMN)
 
 static void die(const char *fmt, ...) {
     va_list ap;
@@ -245,9 +250,15 @@ static int msg_topic[MAX_TRACK];
 static char dial_ip[4096][64];
 static int trace;
 static int connected, peak, dial_failed[16], stream_failed[16], statuses, inbound[NPROTO], goodbyes;
-static long topic_new[NTOPIC], topic_dup, subscriptions;
+static long topic_new[NALL], topic_dup, subscriptions;
 static uint8_t digest[4];
-static char topic_names[NTOPIC][128];
+static char topic_names[NALL][128];
+
+/* Partial messages: PARTIAL actions, the distinct peers that sent them, and the last PARTIAL_PEERS of subnet 0. */
+static long partials, partial_meta, partial_msg, partial_bytes, partial_gossip;
+static uint64_t partial_from[1024];
+static int partial_peers;
+static long pp_count = -1, pp_requests, pp_supports;
 
 static uint64_t goodbye_reason[8][2];
 
@@ -471,7 +482,7 @@ static void handle_actions(void) {
             int slot = (int)(m->handle % MAX_TRACK);
             msg_handle[slot] = m->handle;
             msg_topic[slot] = -1;
-            for (size_t k = 0; k < NTOPIC; k++)
+            for (size_t k = 0; k < NALL; k++)
                 if (strlen(topic_names[k]) == m->topic_len && !memcmp(topic_names[k], m->topic, m->topic_len))
                     msg_topic[slot] = (int)k;
             break;
@@ -490,6 +501,29 @@ static void handle_actions(void) {
             break;
         }
         case ACT_PEER_TOPIC: subscriptions += ((act_peer_topic *)p)->subscribed ? 1 : -1; break;
+        case ACT_PARTIAL: {
+            act_partial *m = (act_partial *)p;
+            partials++;
+            partial_meta += m->meta_len != 0;
+            partial_msg += m->msg_len != 0;
+            partial_bytes += (long)(m->meta_len + m->msg_len);
+            int known = 0;
+            for (int k = 0; k < partial_peers; k++) known |= partial_from[k] == m->peer;
+            if (!known && partial_peers < 1024) partial_from[partial_peers++] = m->peer;
+            break;
+        }
+        case ACT_PARTIAL_PEERS: {
+            act_partial_list *l = (act_partial_list *)p;
+            const uint64_t *e = (const uint64_t *)(l->topic + ((l->topic_len + 7) & ~7ULL));
+            pp_count = (long)l->count;
+            pp_requests = pp_supports = 0;
+            for (uint64_t k = 0; k < l->count; k++) {
+                pp_requests += (e[2 * k + 1] & PARTIAL_REQUESTS) != 0;
+                pp_supports += (e[2 * k + 1] & PARTIAL_SUPPORTS) != 0;
+            }
+            break;
+        }
+        case ACT_PARTIAL_GOSSIP: partial_gossip += (long)((act_partial_list *)p)->count; break;
         default: break;
         }
         p += a->size;
@@ -545,7 +579,17 @@ static void summary(uint64_t secs) {
            inbound[P_PING], inbound[P_META3], inbound[P_META2], goodbyes, subscriptions);
     printf("  messages:");
     for (size_t k = 0; k < NTOPIC; k++) printf(" %s %ld", TOPICS[k], topic_new[k]);
-    printf(", duplicates %ld\n", topic_dup);
+    long columns = 0;
+    for (size_t k = NTOPIC; k < NALL; k++) columns += topic_new[k];
+    printf(" data_column_sidecar_0-%d %ld, duplicates %ld\n", NCOLUMN - 1, columns, topic_dup);
+    printf("  partial: %ld PARTIAL from %d peers (metadata %ld, message %ld, %ld bytes), gossip peers %ld; ", partials,
+           partial_peers, partial_meta, partial_msg, partial_bytes, partial_gossip);
+    if (pp_count >= 0) printf("mesh of subnet 0: %ld partial peers (requests %ld, supports %ld)\n", pp_count, pp_requests, pp_supports);
+    else printf("mesh of subnet 0: not asked yet\n");
+    size_t tl = strlen(topic_names[NTOPIC]);           /* the next summary shows the answer */
+    ev_partial_peers *e = ev_add(EV_PARTIAL_PEERS, sizeof *e + tl);
+    e->topic_len = tl;
+    memcpy(e->topic, topic_names[NTOPIC], tl);
     printf("  dial failures by reason:");
     for (int k = 0; k < 16; k++)
         if (dial_failed[k]) printf(" %d:%d", k, dial_failed[k]);
@@ -580,7 +624,7 @@ int main(int argc, char **argv) {
     if (libp2p_shell_clock(&t0)) die("libp2p_shell_clock");
     memcpy(c->entropy, t0.entropy, 32);
     c->now = t0.now;
-    c->max_connections = 256; c->max_streams = 4096; c->max_peers = 256; c->max_topics = 16;
+    c->max_connections = 256; c->max_streams = 4096; c->max_peers = 256; c->max_topics = 32;
     c->heap_size = 1ull << 30; c->seen_capacity = 65536; c->mcache_capacity = 8192; c->pending_capacity = 4096;
     c->muxers = 3;
     c->send_window = 1 << 20; c->max_rpc = 11 << 20; c->max_data = 10 << 20;
@@ -602,6 +646,7 @@ int main(int argc, char **argv) {
     c->gossipsub_v12 = 1;                   /* gossipsub v1.2, with the IDONTWANT defaults of go-libp2p-pubsub */
     c->idontwant_threshold = 1024; c->dontwant_slots = 256; c->dontwant_ttl = 3;
     c->max_idontwant_messages = 1000; c->max_idontwant_length = 10;
+    c->gossipsub_v13 = 1; c->partial_messages = 1;   /* the Partial Messages extension of gossipsub v1.3 */
 
     uint64_t size = 0;
     if (libp2p_state_size(&cfg, &size)) die("libp2p_state_size");
@@ -631,6 +676,15 @@ int main(int argc, char **argv) {
         uint8_t *e = ev_add(EV_SUBSCRIBE, 24 + tl);
         ((uint64_t *)e)[2] = tl;
         memcpy(e + 24, topic_names[k], tl);
+    }
+    for (size_t k = NTOPIC; k < NALL; k++) {
+        snprintf(topic_names[k], sizeof topic_names[k], "/eth2/%02x%02x%02x%02x/data_column_sidecar_%zu/ssz_snappy",
+                 digest[0], digest[1], digest[2], digest[3], k - NTOPIC);
+        size_t tl = strlen(topic_names[k]);
+        ev_partial_subscribe *e = ev_add(EV_PARTIAL_SUBSCRIBE, sizeof *e + tl);
+        e->flags = PARTIAL_REQUESTS;
+        e->topic_len = tl;
+        memcpy(e->topic, topic_names[k], tl);
     }
 
     FILE *f = fopen(argv[1], "r");

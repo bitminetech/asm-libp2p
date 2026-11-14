@@ -8,14 +8,18 @@
  * PARAMS_JSON in order, the ones inside ifNodeIDEquals only for its own ID,
  * and exits 0 after the last one.
  *
- * stdout: one JSON object per line: "PeerID" at the start, and "Received
- * Message" for every message that arrives, duplicates included. A message ID
- * is the first 8 bytes of the data, logged as a big endian u64 in base 10.
+ * stdout: one JSON object per line: "PeerID" at the start, "Received
+ * Message" for every message that arrives, duplicates included, and "All
+ * parts received" for each partial message group that becomes whole. A
+ * message ID is the first 8 bytes of the data, logged as a big endian u64 in
+ * base 10.
  * stderr: diagnostics. TRACE=1 also prints every action.
  *
  * The library does libp2p and gossipsub, and its shell the sockets. This file
- * reads the script, turns gossipSubParams into the config, and logs.
- * Partial messages are not supported: the node stops with an error on them.
+ * reads the script, turns gossipSubParams into the config, logs, and holds
+ * the partial messages of the test: 8 parts of 1024 bytes, a one-byte
+ * bitmap as parts metadata, and the encoding and peer state of the go node
+ * of the suite (go-libp2p/partial.go and experiment.go).
  */
 #define _GNU_SOURCE
 #include <arpa/inet.h>
@@ -40,6 +44,9 @@ LIBP2P_ABI uint64_t crypto_ed25519_public_key(const uint8_t *private_key, uint8_
 #define MAX_PEERS 512
 #define MAX_PENDING 4096
 #define MAX_TOPICS 16
+#define MAX_GROUPS 64
+#define MAX_GROUP_PEERS 256
+#define PART_LEN 1024
 #define ST_PEER_ID_LEN 152                  /* include/state.inc */
 #define ST_PEER_ID 160
 
@@ -241,6 +248,25 @@ static size_t pending_count;
 static struct { char name[LIBP2P_MAX_TOPIC + 1]; double delay; } topics[MAX_TOPICS];
 static size_t topic_count;
 
+/*
+ * Partial messages, as the go node of the suite keeps them: for each topic and
+ * group, our parts and, for each peer, the parts it has (recvd) and the parts
+ * we told it of (sent). flags: its LIBP2P_PARTIAL_* on the topic.
+ */
+typedef struct {
+    uint64_t handle;
+    uint8_t recvd, sent, got_initial, sent_initial, flags;
+} gpeer_rec;
+typedef struct {
+    int used, want_publish;
+    char topic[LIBP2P_MAX_TOPIC + 1];
+    uint8_t group[8], have;
+    uint8_t parts[8][PART_LEN];
+    int npeers;
+    gpeer_rec peers[MAX_GROUP_PEERS];
+} group_rec;
+static group_rec *groups;
+
 /* Dials of the running connect instruction, by target node: 0 none, 1 open, 2 done. */
 static struct { int target, state, tries; uint64_t retry_at; } dials[MAX_PEERS];
 static size_t dial_count;
@@ -325,6 +351,185 @@ static void dial_done(uint64_t tag, int failed, uint64_t reason) {
     }
 }
 
+/* ---------------------------------------------------------------- Partial messages */
+
+static void be64(uint64_t v, uint8_t out[8]) {
+    for (int i = 0; i < 8; i++) out[i] = (uint8_t)(v >> (56 - 8 * i));
+}
+
+static uint64_t get_be64(const uint8_t *p) {
+    uint64_t v = 0;
+    for (int i = 0; i < 8; i++) v = v << 8 | p[i];
+    return v;
+}
+
+static group_rec *group_of(const char *topic, size_t tl, const uint8_t group[8]) {
+    group_rec *free_slot = NULL;
+    for (int i = 0; i < MAX_GROUPS; i++) {
+        group_rec *g = &groups[i];
+        if (g->used && strlen(g->topic) == tl && !memcmp(g->topic, topic, tl) && !memcmp(g->group, group, 8)) return g;
+        if (!g->used && !free_slot) free_slot = g;
+    }
+    if (!free_slot || tl > LIBP2P_MAX_TOPIC) die("partial message groups");
+    memset(free_slot, 0, sizeof *free_slot);
+    free_slot->used = 1;
+    memcpy(free_slot->topic, topic, tl);
+    memcpy(free_slot->group, group, 8);
+    return free_slot;
+}
+
+static gpeer_rec *gpeer_of(group_rec *g, uint64_t handle) {
+    for (int i = 0; i < g->npeers; i++)
+        if (g->peers[i].handle == handle) return &g->peers[i];
+    if (g->npeers == MAX_GROUP_PEERS) die("partial message peers");
+    gpeer_rec *p = &g->peers[g->npeers++];
+    memset(p, 0, sizeof *p);
+    p->handle = handle;
+    return p;
+}
+
+/* The parts of the bitmap: part i holds the u64 values from the group ID + 128 i, big endian. */
+static void fill_parts(group_rec *g, uint8_t bitmap) {
+    uint64_t start = get_be64(g->group);
+    for (int i = 0; i < 8; i++) {
+        if (!(bitmap >> i & 1)) continue;
+        for (int j = 0; j < PART_LEN / 8; j++) be64(start + (uint64_t)i * (PART_LEN / 8) + (uint64_t)j, g->parts[i] + 8 * j);
+        g->have |= (uint8_t)(1 << i);
+    }
+}
+
+/* An encoded partial message: the bitmap of its parts, the parts in order, then the group ID. 0 when well formed. */
+static int extend(group_rec *g, const uint8_t *data, uint64_t n) {
+    if (n < 9 || memcmp(data + n - 8, g->group, 8) || (n - 9) % PART_LEN) return -1;
+    uint8_t bitmap = data[0];
+    const uint8_t *p = data + 1, *end = data + n - 8;
+    for (int i = 0; i < 8 && p < end; i++) {
+        if (!(bitmap >> i & 1)) continue;
+        if (!(g->have >> i & 1)) {
+            memcpy(g->parts[i], p, PART_LEN);
+            g->have |= (uint8_t)(1 << i);
+        }
+        p += PART_LEN;
+    }
+    return 0;
+}
+
+static void log_complete(group_rec *g) {
+    char fields[64];
+    snprintf(fields, sizeof fields, ",\"group id\":%llu", (unsigned long long)get_be64(g->group));
+    log_line("All parts received", fields);
+}
+
+/* PARTIAL_SEND to one peer: the metadata byte when meta is set, and the parts of bitmap when it is not 0. */
+static void partial_send(group_rec *g, uint64_t peer, int meta, uint8_t metadata, uint8_t bitmap) {
+    size_t tl = strlen(g->topic), ta = (tl + 7) & ~(size_t)7, ml = meta ? 1 : 0, ma = ml ? 8 : 0;
+    size_t count = 0;
+    for (int i = 0; i < 8; i++) count += bitmap >> i & 1;
+    size_t dl = bitmap ? 1 + count * PART_LEN + 8 : 0;
+    ev_partial_send *e = ev_add(EV_PARTIAL_SEND, sizeof *e + ta + 8 + ma + dl);
+    e->peer = peer;
+    e->topic_len = tl;
+    e->group_len = 8;
+    e->meta_len = ml;
+    e->msg_len = dl;
+    memcpy(e->bytes, g->topic, tl);
+    memcpy(e->bytes + ta, g->group, 8);
+    if (ml) e->bytes[ta + 8] = metadata;
+    if (dl) {
+        uint8_t *d = e->bytes + ta + 8 + ma;
+        *d++ = bitmap;
+        for (int i = 0; i < 8; i++)
+            if (bitmap >> i & 1) {
+                memcpy(d, g->parts[i], PART_LEN);
+                d += PART_LEN;
+            }
+        memcpy(d, g->group, 8);
+    }
+}
+
+/*
+ * Publish to the peers of the list, or to every peer of the group: the parts
+ * a peer that wants partial messages lacks, once it told us its parts; our
+ * metadata the first time and when we have parts we did not tell it of
+ * (go-libp2p/partial.go PublishActions).
+ */
+static void publish_group(group_rec *g, const uint64_t *list, int count) {
+    int n = list ? count : g->npeers;
+    for (int k = 0; k < n; k++) {
+        gpeer_rec *p = list ? gpeer_of(g, list[k]) : &g->peers[k];
+        uint8_t bitmap = 0;
+        int meta = 0;
+        if ((p->flags & PARTIAL_REQUESTS) && p->got_initial && (g->have & ~p->recvd)) {
+            bitmap = (uint8_t)(g->have & ~p->recvd);
+            p->sent |= g->have;
+            p->recvd |= g->have;
+        }
+        if (!p->sent_initial || (g->have & ~p->sent)) {
+            p->sent_initial = 1;
+            p->sent |= g->have;
+            meta = 1;
+        }
+        if (meta || bitmap) partial_send(g, p->handle, meta, p->sent, bitmap);
+    }
+}
+
+/* Publish to the mesh and the peers of the group: PARTIAL_PEERS of its topic gives the mesh. */
+static void want_publish(group_rec *g) {
+    for (int i = 0; i < MAX_GROUPS; i++)
+        if (groups[i].used && groups[i].want_publish && !strcmp(groups[i].topic, g->topic)) {
+            g->want_publish = 1;
+            return;
+        }
+    g->want_publish = 1;
+    size_t tl = strlen(g->topic);
+    ev_partial_peers *e = ev_add(EV_PARTIAL_PEERS, sizeof *e + tl);
+    e->topic_len = tl;
+    memcpy(e->topic, g->topic, tl);
+}
+
+static void on_partial(const act_partial *a) {
+    if (a->group_len != 8) return;
+    const uint8_t *st = state;
+    group_rec *g = group_of((const char *)a->topic, a->topic_len, st + a->group_off);
+    gpeer_rec *p = gpeer_of(g, a->peer);
+    p->flags = (uint8_t)a->flags;
+    if (a->meta_len) {
+        p->got_initial = 1;
+        p->recvd |= st[a->meta_off];
+    }
+    uint8_t before = g->have;
+    if (a->msg_len) {
+        uint8_t bitmap = st[a->msg_off];
+        p->recvd |= bitmap;
+        p->sent |= bitmap;
+        if (extend(g, st + a->msg_off, a->msg_len)) {
+            note("partial message from %s: not well formed", peer_name(a->peer));
+            return;
+        }
+    }
+    if (g->have != before && g->have == 0xFF) log_complete(g);
+    want_publish(g);
+}
+
+static void on_partial_list(const act_partial_list *a, int gossip) {
+    const uint64_t *e = (const uint64_t *)(a->topic + ((a->topic_len + 7) & ~7ULL));
+    for (int i = 0; i < MAX_GROUPS; i++) {
+        group_rec *g = &groups[i];
+        if (!g->used || strlen(g->topic) != a->topic_len || memcmp(g->topic, a->topic, a->topic_len)) continue;
+        if (!gossip && !g->want_publish) continue;
+        int added = 0;
+        for (uint64_t k = 0; k < a->count; k++) {
+            int before = g->npeers;
+            gpeer_rec *p = gpeer_of(g, gossip ? e[k] : e[2 * k]);
+            if (!gossip) p->flags = (uint8_t)e[2 * k + 1];
+            added |= g->npeers != before;
+        }
+        if (gossip && !added) continue;
+        g->want_publish = 0;
+        publish_group(g, NULL, 0);
+    }
+}
+
 static void handle_actions(void) {
     uint64_t *h = (uint64_t *)actions;
     uint8_t *p = actions + h[1], *end = p + h[2];
@@ -396,6 +601,9 @@ static void handle_actions(void) {
         case ACT_PUBLISHED:
             note("published to %llu peers", (unsigned long long)((act_published *)p)->peers);
             break;
+        case ACT_PARTIAL: on_partial((const act_partial *)p); break;
+        case ACT_PARTIAL_PEERS: on_partial_list((const act_partial_list *)p, 0); break;
+        case ACT_PARTIAL_GOSSIP: on_partial_list((const act_partial_list *)p, 1); break;
         default: break;
         }
         p += a->size;
@@ -444,7 +652,8 @@ static uint64_t param_ms(const jv *gs, const char *key, uint64_t fallback_ms) {
  * default of go-libp2p-pubsub a01777894f4c (gossipsub.go), the version the
  * go node of the suite builds. HeartbeatInitialDelay, PrunePeers, the
  * connection fields and SlowHeartbeatWarning have no field in the config.
- * The node speaks gossipsub v1.2 and keeps 256 IDs of IDONTWANT per peer.
+ * The node speaks gossipsub v1.3 with the Partial Messages extension, as the
+ * go node does, and keeps 256 IDs of IDONTWANT per peer.
  */
 static void gossip_config(libp2p_config *c, const jv *gs) {
     c->d = param_u(gs, "D", 6);
@@ -478,6 +687,8 @@ static void gossip_config(libp2p_config *c, const jv *gs) {
     if (!c->dontwant_ttl) c->dontwant_ttl = 1;
     c->max_idontwant_messages = param_u(gs, "MaxIDontWantMessages", 1000);
     c->max_idontwant_length = param_u(gs, "MaxIDontWantLength", 10);
+    c->gossipsub_v13 = 1;
+    c->partial_messages = 1;
 }
 
 /* ---------------------------------------------------------------- The script */
@@ -522,12 +733,40 @@ static void run(const jv *ins) {
         wait_until = start_ms + (uint64_t)(j_num(ins, "elapsedSeconds") * 1000.0);
     } else if (!strcmp(type, "subscribeToTopic")) {
         const jv *partial = j_get(ins, "partial");
-        if (partial && partial->type == J_BOOL && partial->num) die("partial messages are not supported");
         const char *t = j_str(ins, "topicID");
         size_t tl = strlen(t);
-        uint8_t *e = ev_add(EV_SUBSCRIBE, 24 + tl);
-        ((uint64_t *)e)[2] = tl;
-        memcpy(e + 24, t, tl);
+        ev_partial_subscribe *e = ev_add(EV_PARTIAL_SUBSCRIBE, sizeof *e + tl);
+        e->flags = partial && partial->type == J_BOOL && partial->num ? PARTIAL_REQUESTS : 0;
+        e->topic_len = tl;
+        memcpy(e->topic, t, tl);
+    } else if (!strcmp(type, "addPartialMessage")) {
+        const char *t = j_str(ins, "topicID");
+        uint8_t gid[8];
+        be64((uint64_t)j_num(ins, "groupID"), gid);
+        group_rec *g = group_of(t, strlen(t), gid);
+        uint8_t before = g->have;
+        fill_parts(g, (uint8_t)j_num(ins, "parts"));
+        if (g->have != before && g->have == 0xFF) log_complete(g);
+    } else if (!strcmp(type, "publishPartial")) {
+        const char *t = j_str(ins, "topicID");
+        uint8_t gid[8];
+        be64((uint64_t)j_num(ins, "groupID"), gid);
+        group_rec *g = group_of(t, strlen(t), gid);
+        const jv *to = j_get(ins, "publishToNodeIDs");
+        if (to && to->type == J_ARR) {
+            static uint64_t list[MAX_GROUP_PEERS];
+            int count = 0;
+            for (size_t i = 0; i < to->count && count < MAX_GROUP_PEERS; i++) {
+                uint8_t id[48];
+                char id58[64];
+                b58_encode(id, node_peer_id((int)to->items[i].num, id), id58);
+                for (size_t k = 0; k < MAX_PEERS; k++)
+                    if (peers[k].handle && !strcmp(peers[k].id, id58)) list[count++] = peers[k].handle;
+            }
+            publish_group(g, list, count);
+        } else {
+            want_publish(g);
+        }
     } else if (!strcmp(type, "setTopicValidationDelay")) {
         const char *t = j_str(ins, "topicID");
         size_t i = 0;
@@ -602,6 +841,8 @@ int main(int argc, char **argv) {
     j_value(&root);
     script = j_get(&root, "script");
     if (!script || script->type != J_ARR) die("params: script expected");
+    groups = calloc(MAX_GROUPS, sizeof *groups);
+    if (!groups) die("memory");
 
     static struct { libp2p_config c; } cfg;
     libp2p_config *c = &cfg.c;

@@ -8,8 +8,9 @@
 
 /*
  * libp2p_gossip_peer_up(peer): a peer connected: its IDONTWANT ring is empty,
- * and our gossipsub stream to it opens, with /meshsub/1.2.0 then
- * /meshsub/1.1.0 to propose when gossipsub_v12 is on.
+ * and our gossipsub stream to it opens, with /meshsub/1.3.0 when
+ * gossipsub_v13 is on, /meshsub/1.2.0 when gossipsub_v12 is on, then
+ * /meshsub/1.1.0 to propose.
  */
 LOCAL_FUNCTION libp2p_gossip_peer_up
     ENTER   0
@@ -31,7 +32,9 @@ LOCAL_FUNCTION libp2p_gossip_peer_up
     li      a2, 0
     li      a3, 0
     CFG     t0, LIBP2P_CFG_GOSSIPSUB_V12
-    addi    a4, t0, 1
+    CFG     t1, LIBP2P_CFG_GOSSIPSUB_V13
+    add     a4, t0, t1
+    addi    a4, a4, 1
     call    libp2p_stream_open
     beqz    a0, 9f
     call    libp2p_stream_index
@@ -90,8 +93,10 @@ LOCAL_FUNCTION libp2p_gossip_peer_down
 END_FUNCTION libp2p_gossip_peer_down
 
 /*
- * libp2p_gossip_out_ready(stream): our gossipsub stream to a peer is open: it
- * learns our subscriptions; with /meshsub/1.2.0 it gets IDONTWANT.
+ * libp2p_gossip_out_ready(stream): our gossipsub stream to a peer is open:
+ * with /meshsub/1.3.0 its first RPC is our Extensions control message; it
+ * learns our subscriptions; with /meshsub/1.2.0 or /meshsub/1.3.0 it gets
+ * IDONTWANT.
  */
 LOCAL_FUNCTION libp2p_gossip_out_ready
     ENTER   0
@@ -101,13 +106,18 @@ LOCAL_FUNCTION libp2p_gossip_out_ready
     mv      s1, a0
     ld      t0, P_FLAGS(s1)
     ori     t0, t0, (PF_GOSSIP | PF_HELLO)
-    ld      t1, S_PROTO(s4)                 # /meshsub/1.2.0 is the first proposal
-    bnez    t1, 3f
+    ld      t1, S_PROTO(s4)                 # the index of the proposal taken
     CFG     t2, LIBP2P_CFG_GOSSIPSUB_V12
-    beqz    t2, 3f
+    CFG     t3, LIBP2P_CFG_GOSSIPSUB_V13
+    add     t2, t2, t3                      # the index of /meshsub/1.1.0
+    bgeu    t1, t2, 3f
     ori     t0, t0, PF_IDONTWANT
 3:  sd      t0, P_FLAGS(s1)
-    TABLE   s2, ST_TOPIC_OFF
+    bnez    t1, 4f                          # /meshsub/1.3.0: our extensions first
+    beqz    t3, 4f
+    mv      a0, s1
+    call    libp2p_gs_send_ext
+4:  TABLE   s2, ST_TOPIC_OFF
     ld      s3, ST_TOPIC_COUNT(s9)
 1:  beqz    s3, 9f
     ld      t0, T_USED(s2)
@@ -125,7 +135,10 @@ LOCAL_FUNCTION libp2p_gossip_out_ready
 9:  LEAVE   0
 END_FUNCTION libp2p_gossip_out_ready
 
-/* libp2p_gossip_in_ready(stream): the peer opened its gossipsub stream to us. */
+/*
+ * libp2p_gossip_in_ready(stream): the peer opened its gossipsub stream to us:
+ * its extensions come with the first RPC on it.
+ */
 LOCAL_FUNCTION libp2p_gossip_in_ready
     ENTER   0
     mv      s1, a0
@@ -134,6 +147,9 @@ LOCAL_FUNCTION libp2p_gossip_in_ready
     ld      a0, S_PEER(s1)
     call    libp2p_peer_at
     sd      s2, P_GS_IN(a0)
+    ld      t0, P_FLAGS(a0)
+    andi    t0, t0, ~(PF_EXT_SEEN | PF_EXT_GOT | PF_PARTIAL)
+    sd      t0, P_FLAGS(a0)
     LEAVE   0
 END_FUNCTION libp2p_gossip_in_ready
 
@@ -143,7 +159,8 @@ END_FUNCTION libp2p_gossip_in_ready
  * libp2p_gossip_rx(stream, p, n): bytes of a peer's gossipsub stream: each RPC
  * is a varint length, then that many bytes, read into one heap block and
  * handled whole. An RPC above max_rpc resets the stream; one the heap
- * cannot hold is skipped.
+ * cannot hold is skipped. A block that PARTIAL actions refer to stays, on
+ * the ST_KEPT_RPC list, until the next step.
  * s1 stream, s2 p, s3 bytes left, s4 RPC length, s5 got, s6 bytes, s7 block.
  */
 LOCAL_FUNCTION libp2p_gossip_rx
@@ -207,7 +224,13 @@ LOCAL_FUNCTION libp2p_gossip_rx
     add     a1, s9, s7
     mv      a2, s4
     call    libp2p_rpc_handle
-    mv      a0, s7
+    beqz    a0, 5f
+    add     t0, s9, s7                      # kept until the next step
+    ld      t1, ST_KEPT_RPC(s9)
+    sd      t1, (HB_NEXT - HB_HEADER)(t0)
+    sd      s7, ST_KEPT_RPC(s9)
+    j       1b
+5:  mv      a0, s7
     call    libp2p_heap_free
     j       1b
 8:  mv      a0, s1
@@ -217,15 +240,19 @@ LOCAL_FUNCTION libp2p_gossip_rx
 END_FUNCTION libp2p_gossip_rx
 
 /*
- * libp2p_rpc_handle(peer index, p, n): one whole RPC of a peer: subscriptions,
- * published messages and control, in their order. A graylisted peer is not
- * heard; a field that is not well formed ends the RPC.
+ * libp2p_rpc_handle(peer index, p, n) -> 1 when a PARTIAL action refers to
+ * the bytes of the RPC, else 0: one whole RPC of a peer: subscriptions,
+ * published messages, control and partial messages, in their order. A
+ * graylisted peer is not heard; a field that is not well formed ends the
+ * RPC. After the first RPC, the extensions of the peer are known.
+ * s1 peer index, s2 p, s3 end, s4 peer, s5 result.
  */
 LOCAL_FUNCTION libp2p_rpc_handle
     ENTER   0
     mv      s1, a0
     mv      s2, a1
     add     s3, a1, a2
+    li      s5, 0
     mv      a0, s1
     call    libp2p_peer_at
     mv      s4, a0
@@ -236,12 +263,12 @@ LOCAL_FUNCTION libp2p_rpc_handle
     call    libp2p_score
     fld     fa1, (ST_CONFIG + LIBP2P_CFG_GRAYLIST_THRESHOLD)(s9)
     flt.d   t0, fa0, fa1
-    bnez    t0, 9f
+    bnez    t0, 8f
 1:  mv      a0, s2
     mv      a1, s3
     call    libp2p_pb_next
     li      t0, 1
-    bne     a0, t0, 9f
+    bne     a0, t0, 8f
     mv      s2, a5
     li      t0, 2
     bne     a2, t0, 1b
@@ -258,10 +285,19 @@ LOCAL_FUNCTION libp2p_rpc_handle
     call    libp2p_rpc_msg
     j       1b
 3:  li      t0, 3
-    bne     t1, t0, 1b
+    bne     t1, t0, 4f
     call    libp2p_rpc_control
     j       1b
-9:  LEAVE   0
+4:  li      t0, 10
+    bne     t1, t0, 1b
+    call    libp2p_rpc_partial
+    or      s5, s5, a0
+    j       1b
+8:  ld      t0, P_FLAGS(s4)                 # its extensions are known now
+    ori     t0, t0, PF_EXT_SEEN
+    sd      t0, P_FLAGS(s4)
+9:  mv      a0, s5
+    LEAVE   0
 END_FUNCTION libp2p_rpc_handle
 
 /*
@@ -320,11 +356,12 @@ LOCAL_FUNCTION libp2p_peer_topic
 END_FUNCTION libp2p_peer_topic
 
 /*
- * libp2p_rpc_sub(peer index, p, n): one SubOpts: subscribe (field 1) and topicid
- * (field 2). The peer's subscription is noted, with PEER_TOPIC; leaving a
- * topic takes it out of our mesh and fanout of the topic.
+ * libp2p_rpc_sub(peer index, p, n): one SubOpts: subscribe (field 1), topicid
+ * (field 2), requestsPartial (3) and supportsSendingPartial (4). The peer's
+ * subscription and its partial flags are noted, with PEER_TOPIC for a new
+ * one; leaving a topic takes it out of our mesh and fanout of the topic.
  * s1 peer index, s2 p, s3 end, s4 subscribe, s5 topic name, s6 length,
- * s7 topic, s8 topic index.
+ * s7 topic, s8 partial flags (LIBP2P_PARTIAL_*) then the topic index.
  */
 LOCAL_FUNCTION libp2p_rpc_sub
     ENTER   0
@@ -333,6 +370,7 @@ LOCAL_FUNCTION libp2p_rpc_sub
     add     s3, a1, a2
     li      s4, 0
     li      s5, 0
+    li      s8, 0
 1:  mv      a0, s2
     mv      a1, s3
     call    libp2p_pb_next
@@ -343,10 +381,20 @@ LOCAL_FUNCTION libp2p_rpc_sub
     snez    s4, a3
     j       1b
 11: li      t0, 2
-    bne     a1, t0, 1b
+    bne     a1, t0, 12f
     bne     a2, t0, 1b
     mv      s5, a3
     mv      s6, a4
+    j       1b
+12: bnez    a2, 1b                          # requestsPartial: supports too
+    beqz    a3, 1b
+    li      t0, 3
+    bne     a1, t0, 13f
+    ori     s8, s8, (LIBP2P_PARTIAL_REQUESTS | LIBP2P_PARTIAL_SUPPORTS)
+    j       1b
+13: li      t0, 4
+    bne     a1, t0, 1b
+    ori     s8, s8, LIBP2P_PARTIAL_SUPPORTS
     j       1b
 2:  li      t0, NONE
     beq     a0, t0, 9f
@@ -365,10 +413,13 @@ LOCAL_FUNCTION libp2p_rpc_sub
     mv      a0, s1
     call    libp2p_pt
     ld      t0, PT_FLAGS(a0)
+    andi    t2, t0, ~(PTF_REQUESTS_PARTIAL | PTF_SUPPORTS_PARTIAL)
+    slli    t3, s8, 3
+    or      t2, t2, t3
+    ori     t2, t2, PTF_SUBSCRIBED
+    sd      t2, PT_FLAGS(a0)
     andi    t1, t0, PTF_SUBSCRIBED
     bnez    t1, 9f
-    ori     t0, t0, PTF_SUBSCRIBED
-    sd      t0, PT_FLAGS(a0)
     ld      t0, T_PEERS(s7)
     addi    t0, t0, 1
     sd      t0, T_PEERS(s7)
@@ -402,7 +453,7 @@ LOCAL_FUNCTION libp2p_rpc_sub
     ld      t1, T_FANOUT(s7)
     addi    t1, t1, -1
     sd      t1, T_FANOUT(s7)
-7:  andi    t0, t0, ~(PTF_SUBSCRIBED | PTF_FANOUT)
+7:  andi    t0, t0, ~(PTF_SUBSCRIBED | PTF_FANOUT | PTF_REQUESTS_PARTIAL | PTF_SUPPORTS_PARTIAL)
     sd      t0, PT_FLAGS(s5)
     ld      t0, T_PEERS(s7)
     addi    t0, t0, -1
@@ -529,7 +580,7 @@ LOCAL_FUNCTION libp2p_rpc_msg
 9:  LEAVE   16
 END_FUNCTION libp2p_rpc_msg
 
-/* libp2p_rpc_control(peer index, p, n): a ControlMessage: ihave (1), iwant (2), graft (3), prune (4), idontwant (5). */
+/* libp2p_rpc_control(peer index, p, n): a ControlMessage: ihave (1), iwant (2), graft (3), prune (4), idontwant (5), extensions (6). */
 LOCAL_FUNCTION libp2p_rpc_control
     ENTER   0
     mv      s1, a0
@@ -564,11 +615,188 @@ LOCAL_FUNCTION libp2p_rpc_control
     call    libp2p_ctl_prune
     j       1b
 5:  li      t0, 5
-    bne     t1, t0, 1b
+    bne     t1, t0, 6f
     call    libp2p_ctl_idontwant
+    j       1b
+6:  li      t0, 6
+    bne     t1, t0, 1b
+    call    libp2p_ctl_extensions
     j       1b
 9:  LEAVE   0
 END_FUNCTION libp2p_rpc_control
+
+/*
+ * libp2p_ctl_extensions(peer index, p, n): the Extensions control message of
+ * a peer. Only its first RPC on the stream may hold one, once; another costs
+ * a behaviour penalty. partialMessages (field 10) set marks the peer.
+ * s1 peer index, s2 p, s3 end, s4 peer, s5 partialMessages.
+ */
+LOCAL_FUNCTION libp2p_ctl_extensions
+    ENTER   0
+    mv      s1, a0
+    mv      s2, a1
+    add     s3, a1, a2
+    mv      a0, s1
+    call    libp2p_peer_at
+    mv      s4, a0
+    ld      t0, P_FLAGS(s4)
+    andi    t1, t0, (PF_EXT_SEEN | PF_EXT_GOT)
+    beqz    t1, 1f
+    mv      a0, s4                          # not the first: a protocol violation
+    li      a1, 1
+    call    libp2p_behaviour_penalty
+    j       9f
+1:  ori     t0, t0, PF_EXT_GOT
+    sd      t0, P_FLAGS(s4)
+    li      s5, 0
+2:  mv      a0, s2
+    mv      a1, s3
+    call    libp2p_pb_next
+    li      t0, 1
+    bne     a0, t0, 3f
+    mv      s2, a5
+    li      t0, 10
+    bne     a1, t0, 2b
+    bnez    a2, 2b
+    snez    s5, a3
+    j       2b
+3:  beqz    s5, 9f
+    ld      t0, P_FLAGS(s4)
+    ori     t0, t0, PF_PARTIAL
+    sd      t0, P_FLAGS(s4)
+9:  LEAVE   0
+END_FUNCTION libp2p_ctl_extensions
+
+/*
+ * libp2p_rpc_partial(peer index, p, n) -> 1 when a PARTIAL action refers to
+ * the bytes of the RPC, else 0: the PartialMessagesExtension of a peer that
+ * has the extension, when partial_messages is on: topicID (field 1, 1 to
+ * LIBP2P_MAX_TOPIC bytes) and groupID (2) must be there; partialMessage (3)
+ * counts only on a topic we want partial messages on; partsMetadata (4).
+ * PARTIAL gives the bytes, with the peer's flags on the topic, when metadata
+ * or a message is left.
+ * s1 peer index, s2 p, s3 end, s4 topic, s5 topic length, s6 group,
+ * s7 group length, s8 action. sp + FL: metadata, then message (address
+ * and length each); sp + FL + 32: the peer's flags; sp + FL + 40: our
+ * topic flags.
+ */
+LOCAL_FUNCTION libp2p_rpc_partial
+    ENTER   48
+    mv      s1, a0
+    mv      s2, a1
+    add     s3, a1, a2
+    li      s4, 0
+    li      s6, 0
+    li      s8, 0
+    sd      zero, (FL + 0)(sp)
+    sd      zero, (FL + 8)(sp)
+    sd      zero, (FL + 16)(sp)
+    sd      zero, (FL + 24)(sp)
+    CFG     t0, LIBP2P_CFG_PARTIAL_MESSAGES
+    beqz    t0, 9f
+    mv      a0, s1
+    call    libp2p_peer_at
+    ld      t0, P_FLAGS(a0)
+    andi    t0, t0, PF_PARTIAL
+    beqz    t0, 9f
+1:  mv      a0, s2
+    mv      a1, s3
+    call    libp2p_pb_next
+    li      t0, 1
+    bne     a0, t0, 2f
+    mv      s2, a5
+    li      t0, 2
+    bne     a2, t0, 1b
+    li      t0, 1
+    bne     a1, t0, 11f
+    mv      s4, a3
+    mv      s5, a4
+    j       1b
+11: li      t0, 2
+    bne     a1, t0, 12f
+    mv      s6, a3
+    mv      s7, a4
+    j       1b
+12: li      t0, 3
+    bne     a1, t0, 13f
+    sd      a3, (FL + 16)(sp)               # the message
+    sd      a4, (FL + 24)(sp)
+    j       1b
+13: li      t0, 4
+    bne     a1, t0, 1b
+    sd      a3, (FL + 0)(sp)                # the metadata
+    sd      a4, (FL + 8)(sp)
+    j       1b
+2:  li      t0, NONE
+    beq     a0, t0, 9f
+    beqz    s4, 9f
+    beqz    s6, 9f
+    addi    t0, s5, -1                      # 1 to LIBP2P_MAX_TOPIC bytes
+    li      t1, (LIBP2P_MAX_TOPIC - 1)
+    bltu    t1, t0, 9f
+    sd      zero, (FL + 32)(sp)             # the peer's flags, our topic flags
+    sd      zero, (FL + 40)(sp)
+    mv      a0, s4
+    mv      a1, s5
+    call    libp2p_topic_find
+    beqz    a0, 21f
+    ld      t0, T_FLAGS(a0)
+    sd      t0, (FL + 40)(sp)
+    call    libp2p_topic_idx
+    mv      a1, a0
+    mv      a0, s1
+    call    libp2p_partial_flags
+    sd      a0, (FL + 32)(sp)
+    ld      t0, (FL + 40)(sp)               # a message: only on a topic we want them on
+    andi    t0, t0, TF_REQUESTS_PARTIAL
+    bnez    t0, 3f
+21: sd      zero, (FL + 16)(sp)
+    sd      zero, (FL + 24)(sp)
+3:  ld      t0, (FL + 8)(sp)
+    ld      t1, (FL + 24)(sp)
+    or      t0, t0, t1
+    beqz    t0, 9f                          # nothing to give
+    addi    a1, s5, (LIBP2P_ACT_PM_TOPIC + 7)
+    andi    a1, a1, ~7
+    li      a0, LIBP2P_ACTION_PARTIAL
+    call    libp2p_action
+    beqz    a0, 9f
+    mv      s8, a0
+    mv      a0, s1
+    call    libp2p_peer_at
+    mv      a2, a0
+    li      a0, ST_PEER_OFF
+    li      a1, P_SIZE
+    call    libp2p_handle
+    sd      a0, LIBP2P_ACT_PM_PEER(s8)
+    ld      t0, (FL + 32)(sp)
+    sd      t0, LIBP2P_ACT_PM_FLAGS(s8)
+    sd      s5, LIBP2P_ACT_PM_TOPIC_LEN(s8)
+    sub     t0, s6, s9                      # offsets from the start of the state
+    sd      t0, LIBP2P_ACT_PM_GROUP_OFF(s8)
+    sd      s7, LIBP2P_ACT_PM_GROUP_LEN(s8)
+    ld      t0, (FL + 0)(sp)
+    ld      t1, (FL + 8)(sp)
+    sub     t0, t0, s9
+    bnez    t1, 4f
+    li      t0, 0
+4:  sd      t0, LIBP2P_ACT_PM_META_OFF(s8)
+    sd      t1, LIBP2P_ACT_PM_META_LEN(s8)
+    ld      t0, (FL + 16)(sp)
+    ld      t1, (FL + 24)(sp)
+    sub     t0, t0, s9
+    bnez    t1, 5f
+    li      t0, 0
+5:  sd      t0, LIBP2P_ACT_PM_MSG_OFF(s8)
+    sd      t1, LIBP2P_ACT_PM_MSG_LEN(s8)
+    addi    a0, s8, LIBP2P_ACT_PM_TOPIC
+    mv      a1, s4
+    mv      a2, s5
+    call    libp2p_copy
+    li      s8, 1
+9:  mv      a0, s8
+    LEAVE   48
+END_FUNCTION libp2p_rpc_partial
 
 /* libp2p_backoff_secs(ms) -> whole seconds, rounded up. A leaf. */
 LOCAL_FUNCTION libp2p_backoff_secs
@@ -1081,24 +1309,65 @@ END_FUNCTION libp2p_shuffle
 
 /* ---------------------------------------------------------------- Application events */
 
-/*
- * libp2p_on_subscribe(event): we join a topic: our fanout peers of it, then
- * other subscribed peers at random, fill the mesh up to D (score 0 or more,
- * outside backoff), each with GRAFT; every gossipsub peer hears of it.
- * s1 topic, s2 topic index, s3 mesh count, s4 list, s5 count, s6 i.
- */
+/* libp2p_on_subscribe(event): SUBSCRIBE: libp2p_subscribe, the partial flags kept. */
 LOCAL_FUNCTION libp2p_on_subscribe
-    ENTER   0
+    FRAME
     ld      a1, LIBP2P_EV_TOPIC_LEN(a0)
     addi    a0, a0, LIBP2P_EV_TOPIC
+    li      a2, NONE
+    call    libp2p_subscribe
+    UNFRAME
+END_FUNCTION libp2p_on_subscribe
+
+/* libp2p_on_partial_subscribe(event): PARTIAL_SUBSCRIBE: libp2p_subscribe with its flags. */
+LOCAL_FUNCTION libp2p_on_partial_subscribe
+    FRAME
+    ld      a1, LIBP2P_EV_PS_TOPIC_LEN(a0)
+    ld      a2, LIBP2P_EV_PS_FLAGS(a0)
+    addi    a0, a0, LIBP2P_EV_PS_TOPIC
+    call    libp2p_subscribe
+    UNFRAME
+END_FUNCTION libp2p_on_partial_subscribe
+
+/*
+ * libp2p_subscribe(name, n, flags): we join a topic. flags (LIBP2P_PARTIAL_*,
+ * REQUESTS implying SUPPORTS) become our partial flags of it, or NONE keeps
+ * them. A topic we subscribe to already: when its flags change, every
+ * gossipsub peer hears the new SubOpts. Else our fanout peers of it, then
+ * other subscribed peers at random, fill the mesh up to D (score 0 or
+ * more, outside backoff), each with GRAFT; every gossipsub peer hears of it.
+ * s1 topic, s2 topic index, s3 mesh count, s4 list, s5 count, s6 i,
+ * s7 flags.
+ */
+LOCAL_FUNCTION libp2p_subscribe
+    ENTER   0
+    mv      s7, a2
     call    libp2p_topic_get
     beqz    a0, 9f
     mv      s1, a0
     ld      t0, T_FLAGS(s1)
+    li      t1, NONE
+    beq     s7, t1, 11f
+    andi    t1, s7, LIBP2P_PARTIAL_REQUESTS
+    beqz    t1, 10f
+    ori     s7, s7, LIBP2P_PARTIAL_SUPPORTS
+10: andi    t2, t0, ~(TF_REQUESTS_PARTIAL | TF_SUPPORTS_PARTIAL)
+    slli    t1, s7, 2
+    or      t2, t2, t1
+    sd      t2, T_FLAGS(s1)
     andi    t1, t0, TF_SUBSCRIBED
+    beqz    t1, 12f
+    beq     t2, t0, 9f
+    mv      a0, s1                          # new flags: the peers hear them
+    li      a1, 1
+    call    libp2p_gs_announce
+    j       9f
+11: andi    t1, t0, TF_SUBSCRIBED
     bnez    t1, 9f
+12: ld      t0, T_FLAGS(s1)
     ori     t0, t0, TF_SUBSCRIBED
     sd      t0, T_FLAGS(s1)
+    mv      a0, s1
     call    libp2p_topic_idx
     mv      s2, a0
     call    libp2p_score_all
@@ -1161,7 +1430,7 @@ LOCAL_FUNCTION libp2p_on_subscribe
     li      a1, 1
     call    libp2p_gs_announce
 9:  LEAVE   0
-END_FUNCTION libp2p_on_subscribe
+END_FUNCTION libp2p_subscribe
 
 /* libp2p_fanout_clear_topic(): (s1 topic, s2 index) no peer stays in its fanout. s3 peer index. */
 LOCAL_FUNCTION libp2p_fanout_clear_topic
@@ -1186,9 +1455,9 @@ LOCAL_FUNCTION libp2p_fanout_clear_topic
 END_FUNCTION libp2p_fanout_clear_topic
 
 /*
- * libp2p_on_unsubscribe(event): we leave a topic: every mesh peer gets PRUNE
- * with unsubscribe_backoff and leaves the mesh; every gossipsub peer hears
- * of it.
+ * libp2p_on_unsubscribe(event): we leave a topic, and our partial flags of it
+ * end: every mesh peer gets PRUNE with unsubscribe_backoff and leaves the
+ * mesh; every gossipsub peer hears of it.
  * s1 topic, s2 topic index, s3 peer index.
  */
 LOCAL_FUNCTION libp2p_on_unsubscribe
@@ -1201,7 +1470,7 @@ LOCAL_FUNCTION libp2p_on_unsubscribe
     ld      t0, T_FLAGS(s1)
     andi    t1, t0, TF_SUBSCRIBED
     beqz    t1, 9f
-    andi    t0, t0, ~TF_SUBSCRIBED
+    andi    t0, t0, ~(TF_SUBSCRIBED | TF_REQUESTS_PARTIAL | TF_SUPPORTS_PARTIAL)
     sd      t0, T_FLAGS(s1)
     call    libp2p_topic_idx
     mv      s2, a0
@@ -1235,8 +1504,9 @@ END_FUNCTION libp2p_on_unsubscribe
  * libp2p_on_publish(event): our own message. Already seen: not sent. Else it is
  * seen (valid), cached, and sent: with flood_publish to every subscribed
  * peer at or above publish_threshold; else to the mesh, or to the fanout
- * of a topic we do not subscribe to (filled up to D); never to a peer that
- * sent IDONTWANT for it. PUBLISHED gives the number of peers.
+ * of a topic we do not subscribe to (libp2p_fanout_list); never to a peer
+ * that sent IDONTWANT for it or that gets partial messages of the topic
+ * from us. PUBLISHED gives the number of peers.
  * s1 event, s2 topic, s3 topic index, s4 data block, s5 peers sent,
  * s6 list, s7 count, s8 i.
  */
@@ -1297,48 +1567,19 @@ LOCAL_FUNCTION libp2p_on_publish
     li      a2, 0
     call    libp2p_candidates
     j       6f
-3:  ld      t0, SC_NOW(s10)                 # the fanout
-    sd      t0, T_FANOUT_LAST(s2)
-    ld      t0, T_FANOUT(s2)
-    bnez    t0, 5f
-    fld     fa0, (ST_CONFIG + LIBP2P_CFG_PUBLISH_THRESHOLD)(s9)
-    mv      a0, s3
-    li      a1, 0
-    li      a2, 0
-    call    libp2p_candidates
-    mv      s7, a0
-    SCR     s6, SC_LIST
-    mv      a0, s6
-    mv      a1, s7
-    call    libp2p_shuffle
-    CFG     t0, LIBP2P_CFG_D
-    bltu    s7, t0, 31f
-    mv      s7, t0
-31: li      s8, 0
-4:  bgeu    s8, s7, 5f
-    slli    t0, s8, 2
-    add     t0, s6, t0
-    lwu     a0, 0(t0)
+3:  mv      a0, s2                          # the fanout
     mv      a1, s3
-    call    libp2p_pt
-    ld      t0, PT_FLAGS(a0)
-    ori     t0, t0, PTF_FANOUT
-    sd      t0, PT_FLAGS(a0)
-    ld      t0, T_FANOUT(s2)
-    addi    t0, t0, 1
-    sd      t0, T_FANOUT(s2)
-    addi    s8, s8, 1
-    j       4b
-5:  li      t0, 0xFFF0000000000000
-    fmv.d.x fa0, t0
-    mv      a0, s3
-    li      a1, PTF_FANOUT
-    li      a2, 0
-    call    libp2p_candidates
+    call    libp2p_fanout_list
 6:  mv      s7, a0                          # send to the list
     SCR     s6, SC_LIST
     li      s8, 0
 7:  bgeu    s8, s7, 8f
+    slli    t0, s8, 2
+    add     t0, s6, t0
+    lwu     a0, 0(t0)
+    mv      a1, s3
+    call    libp2p_wants_partial
+    bnez    a0, 71f
     slli    t0, s8, 2
     add     t0, s6, t0
     lwu     a0, 0(t0)
@@ -1370,6 +1611,58 @@ LOCAL_FUNCTION libp2p_on_publish
     sd      s5, LIBP2P_ACT_PUB_PEERS(s6)
 9:  LEAVE   0
 END_FUNCTION libp2p_on_publish
+
+/*
+ * libp2p_fanout_list(topic, topic index) -> the count of the fanout peers of
+ * a topic we do not subscribe to, in SC_LIST: an empty fanout is filled
+ * first with up to D subscribed peers at or above publish_threshold, at
+ * random. Our last publish to the topic is now.
+ * s1 topic, s2 topic index, s3 list, s4 count, s5 i.
+ */
+LOCAL_FUNCTION libp2p_fanout_list
+    ENTER   0
+    mv      s1, a0
+    mv      s2, a1
+    ld      t0, SC_NOW(s10)
+    sd      t0, T_FANOUT_LAST(s1)
+    ld      t0, T_FANOUT(s1)
+    bnez    t0, 5f
+    fld     fa0, (ST_CONFIG + LIBP2P_CFG_PUBLISH_THRESHOLD)(s9)
+    mv      a0, s2
+    li      a1, 0
+    li      a2, 0
+    call    libp2p_candidates
+    mv      s4, a0
+    SCR     s3, SC_LIST
+    mv      a0, s3
+    mv      a1, s4
+    call    libp2p_shuffle
+    CFG     t0, LIBP2P_CFG_D
+    bltu    s4, t0, 31f
+    mv      s4, t0
+31: li      s5, 0
+4:  bgeu    s5, s4, 5f
+    slli    t0, s5, 2
+    add     t0, s3, t0
+    lwu     a0, 0(t0)
+    mv      a1, s2
+    call    libp2p_pt
+    ld      t0, PT_FLAGS(a0)
+    ori     t0, t0, PTF_FANOUT
+    sd      t0, PT_FLAGS(a0)
+    ld      t0, T_FANOUT(s1)
+    addi    t0, t0, 1
+    sd      t0, T_FANOUT(s1)
+    addi    s5, s5, 1
+    j       4b
+5:  li      t0, 0xFFF0000000000000          # the fanout, at any score: -infinity
+    fmv.d.x fa0, t0
+    mv      a0, s2
+    li      a1, PTF_FANOUT
+    li      a2, 0
+    call    libp2p_candidates
+    LEAVE   0
+END_FUNCTION libp2p_fanout_list
 
 /*
  * libp2p_on_message_id(event): the ID of a message waiting for one. Seen
@@ -1434,8 +1727,8 @@ END_FUNCTION libp2p_on_message_id
 /*
  * libp2p_on_validation(event): the application judged a new message. ACCEPT:
  * seen valid, first-delivery and mesh-delivery scores, cached, and sent to
- * the mesh of the topic except the peers that already sent it or sent
- * IDONTWANT for it. REJECT:
+ * the mesh of the topic except the peers that already sent it, sent
+ * IDONTWANT for it or get partial messages of the topic from us. REJECT:
  * seen invalid and an invalid message for those peers. IGNORE: seen
  * ignored. Then the slot is free.
  * s1 event, s2 pending, s3 seen, s4 result, s5 topic, s6 i, s7 list,
@@ -1499,6 +1792,12 @@ LOCAL_FUNCTION libp2p_on_validation
     lwu     a0, 0(t0)
     ld      t1, PD_PEER(s2)
     beq     a0, t1, 31f
+    ld      a1, PD_TOPIC(s2)
+    call    libp2p_wants_partial
+    bnez    a0, 31f
+    slli    t0, s6, 2
+    add     t0, s7, t0
+    lwu     a0, 0(t0)
     mv      a1, s3
     call    libp2p_seen_delivered
     bnez    a0, 31f
@@ -1588,3 +1887,259 @@ LOCAL_FUNCTION libp2p_on_topic_params
     sd      t0, T_FLAGS(s2)
 9:  LEAVE   0
 END_FUNCTION libp2p_on_topic_params
+
+/* ---------------------------------------------------------------- Partial messages */
+
+/*
+ * libp2p_partial_flags(peer index, topic index) -> the LIBP2P_PARTIAL_* flags
+ * of the peer's subscription to the topic; 0 when partial_messages is off
+ * or the peer lacks the extension. A leaf.
+ */
+LOCAL_FUNCTION libp2p_partial_flags
+    UNWIND_END_PROLOGUE
+    CFG     t0, LIBP2P_CFG_PARTIAL_MESSAGES
+    beqz    t0, 8f
+    ld      t0, ST_PEER_OFF(s9)
+    add     t0, s9, t0
+    li      t1, P_SIZE
+    mul     t1, a0, t1
+    add     t0, t0, t1
+    ld      t0, P_FLAGS(t0)
+    andi    t0, t0, PF_PARTIAL
+    beqz    t0, 8f
+    ld      t0, ST_TOPIC_COUNT(s9)
+    mul     a0, a0, t0
+    add     a0, a0, a1
+    li      t1, PT_SIZE
+    mul     a0, a0, t1
+    ld      t0, ST_PT_OFF(s9)
+    add     t0, s9, t0
+    add     a0, a0, t0
+    ld      a0, PT_FLAGS(a0)
+    srli    a0, a0, 3
+    andi    a0, a0, 3
+    ret
+8:  li      a0, 0
+    ret
+END_FUNCTION libp2p_partial_flags
+
+/*
+ * libp2p_wants_partial(peer index, topic index) -> 1 when we send partial
+ * messages on the topic and the peer wants them, else 0.
+ * s1 topic index, s2 the peer's flags.
+ */
+LOCAL_FUNCTION libp2p_wants_partial
+    ENTER   0
+    mv      s1, a1
+    call    libp2p_partial_flags
+    mv      s2, a0
+    mv      a0, s1
+    call    libp2p_topic_at
+    ld      t0, T_FLAGS(a0)
+    srli    t0, t0, 3                       # TF_SUPPORTS_PARTIAL
+    and     a0, s2, t0                      # and LIBP2P_PARTIAL_REQUESTS of the peer
+    andi    a0, a0, 1
+    LEAVE   0
+END_FUNCTION libp2p_wants_partial
+
+/*
+ * libp2p_sends_partial(peer index, topic index) -> 1 when we want partial
+ * messages on the topic and the peer sends them, else 0.
+ * s1 topic index, s2 the peer's flags.
+ */
+LOCAL_FUNCTION libp2p_sends_partial
+    ENTER   0
+    mv      s1, a1
+    call    libp2p_partial_flags
+    srli    s2, a0, 1                       # LIBP2P_PARTIAL_SUPPORTS of the peer
+    mv      a0, s1
+    call    libp2p_topic_at
+    ld      t0, T_FLAGS(a0)
+    srli    t0, t0, 2                       # TF_REQUESTS_PARTIAL
+    and     a0, s2, t0
+    andi    a0, a0, 1
+    LEAVE   0
+END_FUNCTION libp2p_sends_partial
+
+/*
+ * libp2p_on_partial_peers(event): PARTIAL_PEERS gives the peers of a topic to
+ * send partial messages to, with their LIBP2P_PARTIAL_* flags: the mesh
+ * peers of a topic we subscribe to with libp2p_wants_partial or
+ * libp2p_sends_partial; else the fanout peers (libp2p_fanout_list) that
+ * want partial messages. The list is empty when the topic table is full.
+ * s1 event, s2 topic, s3 topic index, s4 list, s5 count kept, s6 i,
+ * s7 count, then the action, s8 entry.
+ */
+LOCAL_FUNCTION libp2p_on_partial_peers
+    ENTER   0
+    mv      s1, a0
+    li      s5, 0
+    call    libp2p_score_all
+    addi    a0, s1, LIBP2P_EV_PP_TOPIC
+    ld      a1, LIBP2P_EV_PP_TOPIC_LEN(s1)
+    call    libp2p_topic_get
+    beqz    a0, 5f
+    mv      s2, a0
+    call    libp2p_topic_idx
+    mv      s3, a0
+    ld      t0, T_FLAGS(s2)
+    andi    t0, t0, TF_SUBSCRIBED
+    beqz    t0, 1f
+    li      t0, 0xFFF0000000000000          # the mesh, at any score: -infinity
+    fmv.d.x fa0, t0
+    mv      a0, s3
+    li      a1, PTF_MESH
+    li      a2, 0
+    call    libp2p_candidates
+    j       2f
+1:  mv      a0, s2
+    mv      a1, s3
+    call    libp2p_fanout_list
+2:  mv      s7, a0
+    SCR     s4, SC_LIST
+    li      s6, 0
+3:  bgeu    s6, s7, 5f                      # keep the peers that take part
+    ld      t0, T_FLAGS(s2)
+    andi    t0, t0, TF_SUBSCRIBED
+    bnez    t0, 31f
+    slli    t0, s6, 2                       # the fanout: the peers that want them
+    add     t0, s4, t0
+    lwu     a0, 0(t0)
+    mv      a1, s3
+    call    libp2p_partial_flags
+    andi    a0, a0, LIBP2P_PARTIAL_REQUESTS
+    j       32f
+31: slli    t0, s6, 2
+    add     t0, s4, t0
+    lwu     a0, 0(t0)
+    mv      a1, s3
+    call    libp2p_wants_partial
+    mv      s8, a0
+    slli    t0, s6, 2
+    add     t0, s4, t0
+    lwu     a0, 0(t0)
+    mv      a1, s3
+    call    libp2p_sends_partial
+    or      a0, a0, s8
+32: beqz    a0, 4f
+    slli    t0, s6, 2
+    add     t0, s4, t0
+    lwu     t1, 0(t0)
+    slli    t0, s5, 2
+    add     t0, s4, t0
+    sw      t1, 0(t0)
+    addi    s5, s5, 1
+4:  addi    s6, s6, 1
+    j       3b
+5:  ld      t0, LIBP2P_EV_PP_TOPIC_LEN(s1)
+    addi    t0, t0, (LIBP2P_ACT_PL_TOPIC + 7)
+    andi    s6, t0, ~7                      # the list, in the action
+    slli    a1, s5, 4
+    add     a1, a1, s6
+    li      a0, LIBP2P_ACTION_PARTIAL_PEERS
+    call    libp2p_action
+    beqz    a0, 9f
+    mv      s7, a0
+    ld      a2, LIBP2P_EV_PP_TOPIC_LEN(s1)
+    sd      a2, LIBP2P_ACT_PL_TOPIC_LEN(s7)
+    sd      s5, LIBP2P_ACT_PL_COUNT(s7)
+    addi    a0, s7, LIBP2P_ACT_PL_TOPIC
+    addi    a1, s1, LIBP2P_EV_PP_TOPIC
+    call    libp2p_copy
+    add     s8, s7, s6
+    li      s6, 0
+6:  bgeu    s6, s5, 9f
+    slli    t0, s6, 2
+    add     t0, s4, t0
+    lwu     a0, 0(t0)
+    call    libp2p_peer_at
+    mv      a2, a0
+    li      a0, ST_PEER_OFF
+    li      a1, P_SIZE
+    call    libp2p_handle
+    sd      a0, 0(s8)
+    slli    t0, s6, 2
+    add     t0, s4, t0
+    lwu     a0, 0(t0)
+    mv      a1, s3
+    call    libp2p_partial_flags
+    sd      a0, 8(s8)
+    addi    s8, s8, 16
+    addi    s6, s6, 1
+    j       6b
+9:  LEAVE   0
+END_FUNCTION libp2p_on_partial_peers
+
+/*
+ * libp2p_on_partial_send(event): PARTIAL_SEND: one PartialMessagesExtension
+ * to a connected peer that has the extension, when partial_messages is on.
+ * The message goes only to a peer that wants partial messages on the topic.
+ * Nothing goes when no metadata or message is left.
+ * s1 event, s2 peer, s3 with message, s4 peer index.
+ */
+LOCAL_FUNCTION libp2p_on_partial_send
+    ENTER   0
+    mv      s1, a0
+    CFG     t0, LIBP2P_CFG_PARTIAL_MESSAGES
+    beqz    t0, 9f
+    ld      a0, LIBP2P_EV_PSEND_PEER(s1)
+    call    libp2p_peer
+    beqz    a0, 9f
+    mv      s2, a0
+    ld      t0, P_FLAGS(s2)
+    andi    t0, t0, PF_PARTIAL
+    beqz    t0, 9f
+    call    libp2p_peer_idx
+    mv      s4, a0
+    li      s3, 0
+    ld      t0, LIBP2P_EV_PSEND_MSG_LEN(s1)
+    beqz    t0, 1f
+    addi    a0, s1, LIBP2P_EV_PSEND_BYTES
+    ld      a1, LIBP2P_EV_PSEND_TOPIC_LEN(s1)
+    call    libp2p_topic_find
+    beqz    a0, 1f
+    call    libp2p_topic_idx
+    mv      a1, a0
+    mv      a0, s4
+    call    libp2p_partial_flags
+    andi    s3, a0, LIBP2P_PARTIAL_REQUESTS
+1:  ld      t0, LIBP2P_EV_PSEND_META_LEN(s1)
+    or      t0, t0, s3
+    beqz    t0, 9f
+    mv      a0, s2
+    mv      a1, s1
+    mv      a2, s3
+    call    libp2p_gs_send_partial
+9:  LEAVE   0
+END_FUNCTION libp2p_on_partial_send
+
+/*
+ * libp2p_on_partial_score(event): the application judged partial message data
+ * of a peer in a topic: ACCEPT counts as a first delivery, REJECT as an
+ * invalid message.
+ * s1 event, s2 peer index.
+ */
+LOCAL_FUNCTION libp2p_on_partial_score
+    ENTER   0
+    mv      s1, a0
+    ld      a0, LIBP2P_EV_PSCORE_PEER(s1)
+    call    libp2p_peer
+    beqz    a0, 9f
+    call    libp2p_peer_idx
+    mv      s2, a0
+    addi    a0, s1, LIBP2P_EV_PSCORE_TOPIC
+    ld      a1, LIBP2P_EV_PSCORE_TOPIC_LEN(s1)
+    call    libp2p_topic_find
+    beqz    a0, 9f
+    call    libp2p_topic_idx
+    mv      a1, a0
+    mv      a0, s2
+    ld      t0, LIBP2P_EV_PSCORE_RESULT(s1)
+    li      t1, LIBP2P_ACCEPT
+    bne     t0, t1, 1f
+    li      a2, 0
+    call    libp2p_score_valid
+    j       9f
+1:  call    libp2p_score_invalid
+9:  LEAVE   0
+END_FUNCTION libp2p_on_partial_score

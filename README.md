@@ -2,7 +2,7 @@
 
 libp2p over TCP for an Ethereum consensus client, in assembly.
 
-Noise, multistream-select, yamux and mplex, streams, identify, and gossipsub v1.1 with peer scores and the IDONTWANT of v1.2. Request/response protocols run in the application, on the stream API.
+Noise, multistream-select, yamux and mplex, streams, identify, and gossipsub v1.1 with peer scores, the IDONTWANT of v1.2, and the Extensions control message of v1.3 with the Partial Messages extension. Request/response protocols run in the application, on the stream API.
 
 Standard: [asm-standard@2a19d3f](https://github.com/bitminetech/asm-standard/blob/2a19d3f7fa737af1c01720b6e891703e53a682aa/ARCHITECTURE.md)
 
@@ -99,5 +99,6 @@ Standard: [asm-standard@2a19d3f](https://github.com/bitminetech/asm-standard/blo
 | Buffers | Scratch of `LIBP2P_SCRATCH_SIZE` bytes; action room of `LIBP2P_ACTIONS_MIN` bytes after the 24-byte header |
 | Message IDs | The application computes them as the consensus specs define, after MESSAGE, and judges each new message with VALIDATION |
 | Request/response | The application runs it on OPEN_STREAM, STREAM_WRITE, STREAM_CLOSE and the STREAM actions |
+| Partial messages | The application encodes groups, parts metadata and partial messages: it joins with PARTIAL_SUBSCRIBE, gets PARTIAL, PARTIAL_PEERS and PARTIAL_GOSSIP, and sends with PARTIAL_SEND |
 | Shutdown | `libp2p_shell_close` |
 | Concurrency | One thread at a time for a state and its shell context |

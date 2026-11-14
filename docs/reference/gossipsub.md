@@ -43,6 +43,8 @@
 - [`libp2p_pb_head`](#function-libp2p_pb_head): writes the head of a bytes field.
 - [`libp2p_gs_rpc`](#function-libp2p_gs_rpc): starts a one-field RPC.
 - [`libp2p_gs_send_sub`](#function-libp2p_gs_send_sub): sends one subscription change.
+- [`libp2p_gs_send_ext`](#function-libp2p_gs_send_ext): sends our Extensions control message.
+- [`libp2p_gs_send_partial`](#function-libp2p_gs_send_partial): sends one partial message RPC.
 - [`libp2p_gs_send_msg`](#function-libp2p_gs_send_msg): sends one message.
 - [`libp2p_gs_send_graft`](#function-libp2p_gs_send_graft): sends GRAFT.
 - [`libp2p_gs_send_prune`](#function-libp2p_gs_send_prune): sends PRUNE.
@@ -60,6 +62,8 @@
 - [`libp2p_rpc_sub`](#function-libp2p_rpc_sub): handles one SubOpts.
 - [`libp2p_rpc_msg`](#function-libp2p_rpc_msg): handles one published message.
 - [`libp2p_rpc_control`](#function-libp2p_rpc_control): handles one ControlMessage.
+- [`libp2p_ctl_extensions`](#function-libp2p_ctl_extensions): handles the Extensions control message.
+- [`libp2p_rpc_partial`](#function-libp2p_rpc_partial): handles one PartialMessagesExtension.
 - [`libp2p_backoff_secs`](#function-libp2p_backoff_secs): turns ms into whole seconds.
 - [`libp2p_prune_to`](#function-libp2p_prune_to): sends PRUNE and starts a backoff.
 - [`libp2p_ctl_graft`](#function-libp2p_ctl_graft): handles GRAFT.
@@ -72,9 +76,12 @@
 - [`libp2p_candidates`](#function-libp2p_candidates): lists the peers that suit a topic.
 - [`libp2p_shuffle`](#function-libp2p_shuffle): shuffles a peer list.
 - [`libp2p_on_subscribe`](#function-libp2p_on_subscribe): handles SUBSCRIBE.
+- [`libp2p_on_partial_subscribe`](#function-libp2p_on_partial_subscribe): handles PARTIAL_SUBSCRIBE.
+- [`libp2p_subscribe`](#function-libp2p_subscribe): joins a topic.
 - [`libp2p_fanout_clear_topic`](#function-libp2p_fanout_clear_topic): clears the fanout of a topic.
 - [`libp2p_on_unsubscribe`](#function-libp2p_on_unsubscribe): handles UNSUBSCRIBE.
 - [`libp2p_on_publish`](#function-libp2p_on_publish): handles PUBLISH.
+- [`libp2p_fanout_list`](#function-libp2p_fanout_list): lists the fanout of a topic.
 - [`libp2p_on_message_id`](#function-libp2p_on_message_id): handles MESSAGE_ID.
 - [`libp2p_on_validation`](#function-libp2p_on_validation): handles VALIDATION.
 - [`libp2p_seen_delivered`](#function-libp2p_seen_delivered): tells whether a peer delivered a message.
@@ -88,6 +95,12 @@
 - [`libp2p_keep_outbound`](#function-libp2p_keep_outbound): keeps outbound peers in a shrunk mesh.
 - [`libp2p_fanout_maintain`](#function-libp2p_fanout_maintain): maintains the fanout of a topic.
 - [`libp2p_emit_gossip`](#function-libp2p_emit_gossip): sends IHAVE for a topic.
+- [`libp2p_partial_flags`](#function-libp2p_partial_flags): gives a peer's partial flags of a topic.
+- [`libp2p_wants_partial`](#function-libp2p_wants_partial): tells whether a peer gets partial messages from us.
+- [`libp2p_sends_partial`](#function-libp2p_sends_partial): tells whether a peer sends us partial messages.
+- [`libp2p_on_partial_peers`](#function-libp2p_on_partial_peers): handles PARTIAL_PEERS.
+- [`libp2p_on_partial_send`](#function-libp2p_on_partial_send): handles PARTIAL_SEND.
+- [`libp2p_on_partial_score`](#function-libp2p_on_partial_score): handles PARTIAL_SCORE.
 
 ### Types
 
@@ -106,6 +119,13 @@
 - [`MessageAction`](#type-messageaction): a message from a peer.
 - [`MessageStatusAction`](#type-messagestatusaction): what to do with a message.
 - [`PublishedAction`](#type-publishedaction): a message we published went out.
+- [`PartialSubscribeEvent`](#type-partialsubscribeevent): a request to join a topic with partial flags.
+- [`PartialPeersEvent`](#type-partialpeersevent): a request for the partial message peers of a topic.
+- [`PartialSendEvent`](#type-partialsendevent): a partial message RPC to one peer.
+- [`PartialScoreEvent`](#type-partialscoreevent): the verdict on partial message data.
+- [`PartialAction`](#type-partialaction): partial message data or metadata from a peer.
+- [`PartialPeersAction`](#type-partialpeersaction): the partial message peers of a topic.
+- [`PartialGossipAction`](#type-partialgossipaction): the gossip peers of a topic that take partial messages.
 - [`PeerTopicAction`](#type-peertopicaction): a peer joined or left a topic.
 
 ### Constants
@@ -114,12 +134,16 @@
 - `LIBP2P_MAX_MSG_ID`: bytes of a message ID.
 - `LIBP2P_PROMISES`: IWANT promises followed at a time.
 - `LIBP2P_MAX_DELIVERERS`: peers kept for each seen message, for scores.
+- `LIBP2P_PARTIAL_REQUESTS`: the partial flag: partial messages are wanted on the topic.
+- `LIBP2P_PARTIAL_SUPPORTS`: the partial flag: partial messages are sent on the topic.
 
 ## Spec
 
-- Document: [pubsub/README.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/pubsub/README.md), [gossipsub-v1.0.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/pubsub/gossipsub/gossipsub-v1.0.md) and [gossipsub-v1.1.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/pubsub/gossipsub/gossipsub-v1.1.md) and [gossipsub-v1.2.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/pubsub/gossipsub/gossipsub-v1.2.md), libp2p/specs at commit c750236; and [p2p-interface.md](https://github.com/ethereum/consensus-specs/blob/313cbfe561517a81eb11607fea7c6985e562eaa9/specs/phase0/p2p-interface.md), consensus-specs at commit 313cbfe.
-- Section: the RPC, StrictNoSign messages, the mesh, fanout, gossip and the message cache (v1.0); PRUNE backoff, flood publishing, adaptive gossip, outbound mesh quotas, opportunistic grafting and extended validators (v1.1); IDONTWANT (v1.2). Peer exchange is not used.
+- Document: [pubsub/README.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/pubsub/README.md), [gossipsub-v1.0.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/pubsub/gossipsub/gossipsub-v1.0.md) and [gossipsub-v1.1.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/pubsub/gossipsub/gossipsub-v1.1.md), [gossipsub-v1.2.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/pubsub/gossipsub/gossipsub-v1.2.md), [gossipsub-v1.3.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/pubsub/gossipsub/gossipsub-v1.3.md) and [partial-messages.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/pubsub/gossipsub/partial-messages.md), libp2p/specs at commit c750236; [p2p-interface.md](https://github.com/ethereum/consensus-specs/blob/313cbfe561517a81eb11607fea7c6985e562eaa9/specs/phase0/p2p-interface.md), consensus-specs at commit 313cbfe; and [partial-columns/p2p-interface.md](https://github.com/ethereum/consensus-specs/blob/313cbfe561517a81eb11607fea7c6985e562eaa9/specs/fulu/partial-columns/p2p-interface.md), consensus-specs at commit 313cbfe.
+- Section: the RPC, StrictNoSign messages, the mesh, fanout, gossip and the message cache (v1.0); PRUNE backoff, flood publishing, adaptive gossip, outbound mesh quotas, opportunistic grafting and extended validators (v1.1); IDONTWANT (v1.2); the Extensions control message (v1.3); the Partial Messages extension. Peer exchange is not used.
+- The application encodes group IDs, parts metadata and partial messages; the library carries them and picks the peers.
 - The consensus specs name gossipsub v1.1 ("/meshsub/1.1.0"); v1.2 adds "/meshsub/1.2.0", and its IDONTWANT is optional for both sides.
+- The partial columns of Fulu use the Partial Messages extension of "/meshsub/1.3.0"; a peer that does not ask for partial messages gets full messages.
 
 ## Function `libp2p_peer_at`
 
@@ -1427,7 +1451,7 @@ libp2p_gs_rpc(peer, inner, size, field) -> place, chunk
 | `peer` | input | [`Peer`](connections.md#type-peer) slot |
 | `inner` | input | unused |
 | `size` | input | u64: bytes of the field value |
-| `field` | input | u64: 1 subscriptions, 2 publish, 3 control |
+| `field` | input | u64: 1 subscriptions, 2 publish, 3 control, 10 partial |
 
 ### Function does
 
@@ -1469,7 +1493,9 @@ libp2p_gs_send_sub(peer, topic, subscribe)
 
 ### Function does
 
-- Writes subscribe (field 1) and topicid (field 2), and queues the RPC with `libp2p_gs_push`.
+- Writes subscribe (field 1) and topicid (field 2).
+- For a subscription, writes requestsPartial (field 3) and supportsSendingPartial (field 4) as true when our partial flags of the topic have them.
+- Queues the RPC with `libp2p_gs_push`.
 
 ### Function never
 
@@ -1485,6 +1511,79 @@ libp2p_gs_send_sub(peer, topic, subscribe)
 - Symbol: `libp2p_gs_send_sub`, local to its object.
 - Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
 - Argument order: `peer`, `topic`, `subscribe`.
+
+## Function `libp2p_gs_send_ext`
+
+Sends an RPC with our Extensions control message.
+
+### Signature
+
+```
+libp2p_gs_send_ext(peer)
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `peer` | input | [`Peer`](connections.md#type-peer) slot |
+
+### Function does
+
+- With `partial_messages` on: writes control with extensions (field 6) holding partialMessages (field 10) true, and queues the RPC.
+
+### Function never
+
+- Makes an OS call.
+
+### Limits
+
+- Stack of its own: 96 bytes on x86-64 (return address included), 96 bytes on ARM64, 112 bytes on RISC-V.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_gs_send_ext`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
+- Argument order: `peer`.
+
+## Function `libp2p_gs_send_partial`
+
+Sends an RPC with one PartialMessagesExtension.
+
+### Signature
+
+```
+libp2p_gs_send_partial(peer, event, with_message)
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `peer` | input | [`Peer`](connections.md#type-peer) slot |
+| `event` | input | [`PartialSendEvent`](#type-partialsendevent) |
+| `with_message` | input | u64: 1 or 0 |
+
+### Function does
+
+- Writes the extension as RPC field 10: topicID (field 1), groupID (field 2), partialMessage (field 3) when `with_message` is 1 and the event has message bytes, and partsMetadata (field 4) when the event has metadata bytes.
+- Queues the RPC with `libp2p_gs_push`.
+
+### Function never
+
+- Makes an OS call.
+
+### Limits
+
+- Stack of its own: 96 bytes on x86-64 (return address included), 96 bytes on ARM64, 112 bytes on RISC-V.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_gs_send_partial`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
+- Argument order: `peer`, `event`, `with_message`.
 
 ## Function `libp2p_gs_send_msg`
 
@@ -1656,7 +1755,7 @@ libp2p_gs_idontwant(pending)
 
 ### Function does
 
-- For a message of `idontwant_threshold` bytes or more, with `idontwant_threshold` above 0: sends IDONTWANT with its ID, at once, to each mesh peer of the topic that speaks "/meshsub/1.2.0", except the peer that sent it.
+- For a message of `idontwant_threshold` bytes or more, with `idontwant_threshold` above 0: sends IDONTWANT with its ID, at once, to each mesh peer of the topic that speaks "/meshsub/1.2.0", except the peer that sent it and the peers that send us partial messages of the topic (`libp2p_sends_partial`).
 
 ### Function never
 
@@ -1728,7 +1827,7 @@ libp2p_gossip_peer_up(peer)
 ### Function does
 
 - Empties the IDONTWANT ring of the peer and its IDONTWANT counter.
-- Opens a gossipsub stream on the first connection of the peer: it proposes "/meshsub/1.2.0", then "/meshsub/1.1.0", when `gossipsub_v12` is on; else "/meshsub/1.1.0".
+- Opens a gossipsub stream on the first connection of the peer, with 1 + `gossipsub_v12` + `gossipsub_v13` proposals (`libp2p_gs_proposal`).
 
 ### Function never
 
@@ -1804,7 +1903,8 @@ libp2p_gossip_out_ready(stream)
 
 ### Function does
 
-- Marks the peer ready for gossipsub, and for IDONTWANT when the stream speaks "/meshsub/1.2.0".
+- Marks the peer ready for gossipsub, and for IDONTWANT when the stream speaks "/meshsub/1.2.0" or "/meshsub/1.3.0".
+- With "/meshsub/1.3.0": sends our Extensions control message first (`libp2p_gs_send_ext`).
 - Sends one SubOpts for each topic we subscribe to.
 
 ### Function never
@@ -1841,6 +1941,7 @@ libp2p_gossip_in_ready(stream)
 ### Function does
 
 - Keeps the stream index in the peer slot.
+- Clears PF_EXT_SEEN, PF_EXT_GOT and PF_PARTIAL: the first RPC on the stream gives the extensions of the peer.
 
 ### Function never
 
@@ -1879,6 +1980,7 @@ libp2p_gossip_rx(stream, p, n)
 
 - Reads the varint length of each RPC, then that many bytes into one heap block, and handles a whole RPC with `libp2p_rpc_handle`.
 - Skips an empty RPC, and an RPC the heap cannot hold.
+- Keeps the block of an RPC that PARTIAL actions refer to on the kept list, linked by `HB_NEXT`, until the next step; frees the others.
 - Resets the stream with PROTOCOL for an RPC above `max_rpc`, or a length prefix of more than 6 bytes.
 
 ### Function never
@@ -1903,7 +2005,7 @@ Handles one whole RPC of a peer.
 ### Signature
 
 ```
-libp2p_rpc_handle(peer, p, n)
+libp2p_rpc_handle(peer, p, n) -> 1 or 0
 ```
 
 ### Arguments
@@ -1917,8 +2019,10 @@ libp2p_rpc_handle(peer, p, n)
 ### Function does
 
 - Ignores the RPC of a peer that is not connected, or whose score is below `graylist_threshold`.
-- Handles subscriptions (field 1), publish (field 2) and control (field 3) in their order.
+- Handles subscriptions (field 1), publish (field 2), control (field 3) and partial (field 10) in their order.
 - Stops at a field that is not well formed.
+- Then marks the peer PF_EXT_SEEN: its extensions are known.
+- Gives 1 when a PARTIAL action refers to bytes of the RPC, else 0.
 
 ### Function never
 
@@ -1932,7 +2036,7 @@ libp2p_rpc_handle(peer, p, n)
 
 - Role: L0.
 - Symbol: `libp2p_rpc_handle`, local to its object.
-- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V). It returns 1 or 0, not a status.
 - Argument order: `peer`, `p`, `n`.
 
 ## Function `libp2p_field_bytes`
@@ -2029,10 +2133,10 @@ libp2p_rpc_sub(peer, p, n)
 
 ### Function does
 
-- Takes subscribe (field 1) and topicid (field 2) of 1 to `LIBP2P_MAX_TOPIC` bytes.
-- Subscribe: marks the peer subscribed, counts it, and gives PEER_TOPIC; a topic slot is taken when needed.
-- Unsubscribe: takes the peer out of our mesh and fanout of the topic, uncounts it, gives PEER_TOPIC, and frees the topic when nothing uses it.
-- Ignores a change that changes nothing, or a topic with no free slot.
+- Takes subscribe (field 1), topicid (field 2) of 1 to `LIBP2P_MAX_TOPIC` bytes, requestsPartial (field 3) and supportsSendingPartial (field 4); requestsPartial implies supportsSendingPartial.
+- Subscribe: sets the partial flags of the peer in the topic; a new subscription marks the peer subscribed, counts it, and gives PEER_TOPIC; a topic slot is taken when needed.
+- Unsubscribe: takes the peer out of our mesh and fanout of the topic, clears its partial flags, uncounts it, gives PEER_TOPIC, and frees the topic when nothing uses it.
+- Ignores an unsubscription that changes nothing, or a topic with no free slot.
 
 ### Function never
 
@@ -2110,7 +2214,7 @@ libp2p_rpc_control(peer, p, n)
 
 ### Function does
 
-- Handles ihave (1), iwant (2), graft (3), prune (4) and idontwant (5) in their order; stops at a field that is not well formed.
+- Handles ihave (1), iwant (2), graft (3), prune (4), idontwant (5) and extensions (6) in their order; stops at a field that is not well formed.
 
 ### Function never
 
@@ -2125,6 +2229,85 @@ libp2p_rpc_control(peer, p, n)
 - Role: L0.
 - Symbol: `libp2p_rpc_control`, local to its object.
 - Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
+- Argument order: `peer`, `p`, `n`.
+
+## Function `libp2p_ctl_extensions`
+
+Handles the Extensions control message of a peer.
+
+### Signature
+
+```
+libp2p_ctl_extensions(peer, p, n)
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `peer` | input | u64: a peer slot index |
+| `p` | input | n bytes: ControlExtensions |
+| `n` | input | u64 |
+
+### Function does
+
+- The first one in the first RPC on the stream: marks the peer PF_EXT_GOT, and PF_PARTIAL when partialMessages (field 10) is true.
+- Any other: one behaviour penalty (P7).
+
+### Function never
+
+- Makes an OS call.
+
+### Limits
+
+- Stack of its own: 96 bytes on x86-64 (return address included), 96 bytes on ARM64, 112 bytes on RISC-V.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_ctl_extensions`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
+- Argument order: `peer`, `p`, `n`.
+
+## Function `libp2p_rpc_partial`
+
+Handles the partial message RPC of a peer.
+
+### Signature
+
+```
+libp2p_rpc_partial(peer, p, n) -> 1 or 0
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `peer` | input | u64: a peer slot index |
+| `p` | input | n bytes: PartialMessagesExtension |
+| `n` | input | u64 |
+
+### Function does
+
+- Heard only with `partial_messages` on, from a peer marked PF_PARTIAL.
+- Takes topicID (field 1, 1 to `LIBP2P_MAX_TOPIC` bytes) and groupID (field 2), which must be there, partialMessage (field 3) and partsMetadata (field 4).
+- Drops partialMessage on a topic we do not want partial messages on.
+- Gives PARTIAL with the flags of the peer on the topic when metadata or a message is left; its group, metadata and message point into the RPC.
+- Gives 1 when it gave PARTIAL, else 0.
+
+### Function never
+
+- Makes an OS call.
+
+### Limits
+
+- Stack of its own: 144 bytes on x86-64 (return address included), 144 bytes on ARM64, 160 bytes on RISC-V.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_rpc_partial`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V). It returns 1 or 0, not a status.
 - Argument order: `peer`, `p`, `n`.
 
 ## Function `libp2p_backoff_secs`
@@ -2564,9 +2747,83 @@ libp2p_on_subscribe(event)
 
 ### Function does
 
-- Takes or finds the topic slot; does nothing when we subscribe already or the table is full.
-- Fills the mesh up to `d`: first our fanout peers of the topic, then other subscribed peers at random; each with a score of 0 or more and outside a backoff, each with GRAFT.
-- Clears the fanout, and tells every peer.
+- Calls `libp2p_subscribe` with flags `NONE`: the partial flags of the topic stay.
+
+### Function never
+
+- Makes an OS call.
+
+### Limits
+
+- Stack of its own: 16 bytes on x86-64 (return address included), 96 bytes on ARM64, 16 bytes on RISC-V.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_on_subscribe`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
+- Argument order: `event`.
+
+## Function `libp2p_on_partial_subscribe`
+
+Joins a topic with partial flags.
+
+### Signature
+
+```
+libp2p_on_partial_subscribe(event)
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `event` | input | [`PartialSubscribeEvent`](#type-partialsubscribeevent) |
+
+### Function does
+
+- Calls `libp2p_subscribe` with the flags of the event.
+
+### Function never
+
+- Makes an OS call.
+
+### Limits
+
+- Stack of its own: 16 bytes on x86-64 (return address included), 96 bytes on ARM64, 16 bytes on RISC-V.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_on_partial_subscribe`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
+- Argument order: `event`.
+
+## Function `libp2p_subscribe`
+
+Joins a topic, and sets our partial flags of it.
+
+### Signature
+
+```
+libp2p_subscribe(name, n, flags)
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `name` | input | n bytes |
+| `n` | input | u64 |
+| `flags` | input | u64: `LIBP2P_PARTIAL_*`, or `NONE` to keep the flags |
+
+### Function does
+
+- Takes or finds the topic slot; does nothing when the table is full.
+- Sets our partial flags of the topic from `flags`; REQUESTS implies SUPPORTS.
+- A topic we subscribe to already: tells every peer the new SubOpts when the flags change.
+- Else fills the mesh up to `d`: first our fanout peers of the topic, then other subscribed peers at random; each with a score of 0 or more and outside a backoff, each with GRAFT.
+- Then clears the fanout, and tells every peer.
 
 ### Function never
 
@@ -2579,9 +2836,9 @@ libp2p_on_subscribe(event)
 ### ABI
 
 - Role: L0.
-- Symbol: `libp2p_on_subscribe`, local to its object.
+- Symbol: `libp2p_subscribe`, local to its object.
 - Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
-- Argument order: `event`.
+- Argument order: `name`, `n`, `flags`.
 
 ## Function `libp2p_fanout_clear_topic`
 
@@ -2629,6 +2886,7 @@ libp2p_on_unsubscribe(event)
 
 ### Function does
 
+- Clears our partial flags of the topic.
 - Sends PRUNE with `unsub_backoff_ms` to each mesh peer and takes it out of the mesh.
 - Tells every peer, and frees the topic when nothing uses it.
 - Does nothing when we do not subscribe.
@@ -2669,8 +2927,8 @@ libp2p_on_publish(event)
 - Does not send a message whose ID is seen.
 - Marks the ID seen and valid, and caches the message.
 - With `flood_publish`: sends it to every subscribed peer at or above `publish_threshold`.
-- Else to the mesh of a topic we subscribe to; or to the fanout, which it first fills up to `d` at random with peers at or above `publish_threshold`.
-- Skips a peer that sent IDONTWANT for the ID.
+- Else to the mesh of a topic we subscribe to; or to the fanout (`libp2p_fanout_list`).
+- Skips a peer that sent IDONTWANT for the ID, and a peer that gets partial messages of the topic from us (`libp2p_wants_partial`).
 - Gives PUBLISHED with the number of peers it went to.
 
 ### Function never
@@ -2687,6 +2945,44 @@ libp2p_on_publish(event)
 - Symbol: `libp2p_on_publish`, local to its object.
 - Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
 - Argument order: `event`.
+
+## Function `libp2p_fanout_list`
+
+Lists the fanout peers of a topic we do not subscribe to.
+
+### Signature
+
+```
+libp2p_fanout_list(topic, index) -> count
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `topic` | state | [`Topic`](gossipsub.md#type-topic) slot |
+| `index` | input | u64: a topic slot index |
+
+### Function does
+
+- Sets our last publish to the topic to now.
+- An empty fanout is first filled up to `d` at random with subscribed peers at or above `publish_threshold`.
+- Writes the fanout peers to the LIST of the scratch and gives their count.
+
+### Function never
+
+- Makes an OS call.
+
+### Limits
+
+- Stack of its own: 96 bytes on x86-64 (return address included), 96 bytes on ARM64, 112 bytes on RISC-V.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_fanout_list`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V). It returns the count, not a status.
+- Argument order: `topic`, `index`.
 
 ## Function `libp2p_on_message_id`
 
@@ -2744,7 +3040,7 @@ libp2p_on_validation(event)
 
 ### Function does
 
-- ACCEPT: marks the ID valid, scores the deliveries, caches the message, and sends it to the mesh of the topic but not to the peers that sent it or sent IDONTWANT for it.
+- ACCEPT: marks the ID valid, scores the deliveries, caches the message, and sends it to the mesh of the topic but not to the peers that sent it, sent IDONTWANT for it, or get partial messages of the topic from us.
 - REJECT: marks the ID invalid and counts an invalid message for each peer that sent it.
 - IGNORE: marks the ID ignored.
 - Then frees the slot; ignores a stale handle or a message still waiting for its ID.
@@ -3140,6 +3436,7 @@ libp2p_emit_gossip(topic)
 
 - Takes the IDs of the cached messages of the topic in the last `mcache_gossip` windows, at most `max_ihave_length` chosen at random.
 - Sends them as IHAVE to max(`d_lazy`, `gossip_factor` x candidates) peers at random: peers not in the mesh or fanout, at or above `gossip_threshold`.
+- A chosen peer that gets partial messages of the topic from us (`libp2p_wants_partial`) gets no IHAVE: PARTIAL_GOSSIP lists these peers, also when there are no IDs and we send partial messages on the topic.
 
 ### Function never
 
@@ -3156,6 +3453,226 @@ libp2p_emit_gossip(topic)
 - Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
 - Argument order: `topic`.
 
+## Function `libp2p_partial_flags`
+
+Gives the partial flags of a peer in a topic.
+
+### Signature
+
+```
+libp2p_partial_flags(peer, topic) -> flags
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `peer` | input | u64: a peer slot index |
+| `topic` | input | u64: a topic slot index |
+
+### Function does
+
+- Gives the `LIBP2P_PARTIAL_*` flags of the SubOpts of the peer.
+- Gives 0 when `partial_messages` is off or the peer is not marked PF_PARTIAL.
+
+### Function never
+
+- Makes an OS call.
+
+### Limits
+
+- Stack of its own: 8 bytes on x86-64 (return address included), 0 bytes on ARM64, 0 bytes on RISC-V.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_partial_flags`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6). It returns the flags, not a status.
+- Argument order: `peer`, `topic`.
+
+## Function `libp2p_wants_partial`
+
+Tells whether we send a peer partial messages of a topic.
+
+### Signature
+
+```
+libp2p_wants_partial(peer, topic) -> 1 or 0
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `peer` | input | u64: a peer slot index |
+| `topic` | input | u64: a topic slot index |
+
+### Function does
+
+- Gives 1 when we send partial messages on the topic and the peer wants them, else 0.
+
+### Function never
+
+- Makes an OS call.
+
+### Limits
+
+- Stack of its own: 96 bytes on x86-64 (return address included), 96 bytes on ARM64, 112 bytes on RISC-V.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_wants_partial`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V). It returns 1 or 0, not a status.
+- Argument order: `peer`, `topic`.
+
+## Function `libp2p_sends_partial`
+
+Tells whether a peer sends us partial messages of a topic.
+
+### Signature
+
+```
+libp2p_sends_partial(peer, topic) -> 1 or 0
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `peer` | input | u64: a peer slot index |
+| `topic` | input | u64: a topic slot index |
+
+### Function does
+
+- Gives 1 when we want partial messages on the topic and the peer sends them, else 0.
+
+### Function never
+
+- Makes an OS call.
+
+### Limits
+
+- Stack of its own: 96 bytes on x86-64 (return address included), 96 bytes on ARM64, 112 bytes on RISC-V.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_sends_partial`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V). It returns 1 or 0, not a status.
+- Argument order: `peer`, `topic`.
+
+## Function `libp2p_on_partial_peers`
+
+Lists the peers of a topic to send partial messages to.
+
+### Signature
+
+```
+libp2p_on_partial_peers(event)
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `event` | input | [`PartialPeersEvent`](#type-partialpeersevent) |
+
+### Function does
+
+- A topic we subscribe to: keeps the mesh peers with `libp2p_wants_partial` or `libp2p_sends_partial`.
+- Else: keeps the fanout peers (`libp2p_fanout_list`) that want partial messages.
+- Gives PARTIAL_PEERS with each peer and its `LIBP2P_PARTIAL_*` flags; the list is empty when the topic table is full.
+
+### Function never
+
+- Makes an OS call.
+
+### Limits
+
+- Stack of its own: 96 bytes on x86-64 (return address included), 96 bytes on ARM64, 112 bytes on RISC-V.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_on_partial_peers`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
+- Argument order: `event`.
+
+## Function `libp2p_on_partial_send`
+
+Sends a partial message RPC to one peer.
+
+### Signature
+
+```
+libp2p_on_partial_send(event)
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `event` | input | [`PartialSendEvent`](#type-partialsendevent) |
+
+### Function does
+
+- With `partial_messages` on, to a connected peer marked PF_PARTIAL: sends the RPC with `libp2p_gs_send_partial`.
+- The message goes only to a peer that wants partial messages on the topic.
+- Sends nothing when no metadata or message is left.
+
+### Function never
+
+- Makes an OS call.
+
+### Limits
+
+- Stack of its own: 96 bytes on x86-64 (return address included), 96 bytes on ARM64, 112 bytes on RISC-V.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_on_partial_send`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
+- Argument order: `event`.
+
+## Function `libp2p_on_partial_score`
+
+Scores partial message data of a peer.
+
+### Signature
+
+```
+libp2p_on_partial_score(event)
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `event` | input | [`PartialScoreEvent`](#type-partialscoreevent) |
+
+### Function does
+
+- ACCEPT: a first delivery of the peer in the topic (`libp2p_score_valid`).
+- REJECT: an invalid message of the peer in the topic (`libp2p_score_invalid`).
+- Does nothing for a peer that is not connected or a topic with no slot.
+
+### Function never
+
+- Makes an OS call.
+
+### Limits
+
+- Stack of its own: 96 bytes on x86-64 (return address included), 96 bytes on ARM64, 112 bytes on RISC-V.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_on_partial_score`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
+- Argument order: `event`.
+
 ## Type `Topic`
 
 One topic: our subscription, its mesh and fanout, its score parameters.
@@ -3165,7 +3682,7 @@ One topic: our subscription, its mesh and fanout, its score parameters.
 | Offset | Field | Type | Meaning |
 |---|---|---|---|
 | 0 | `used` | u64 | 1 while the slot is in use |
-| 8 | `flags` | u64 | TF_SUBSCRIBED, TF_PARAMS |
+| 8 | `flags` | u64 | TF_SUBSCRIBED, TF_PARAMS, TF_REQUESTS_PARTIAL, TF_SUPPORTS_PARTIAL |
 | 16 | `len` | u64 | Bytes of the name |
 | 24 | `hash` | u64 | FNV-1a 64 of the name |
 | 32 | `name` | 256 bytes | The name |
@@ -3188,7 +3705,7 @@ The state of one peer in one topic.
 
 | Offset | Field | Type | Meaning |
 |---|---|---|---|
-| 0 | `flags` | u64 | PTF_SUBSCRIBED, PTF_MESH, PTF_FANOUT |
+| 0 | `flags` | u64 | PTF_SUBSCRIBED, PTF_MESH, PTF_FANOUT, PTF_REQUESTS_PARTIAL, PTF_SUPPORTS_PARTIAL |
 | 8 | `graft_time` | u64 | ms |
 | 16 | `backoff` | u64 | ms: no GRAFT before then |
 | 24 | `first` | f64 | P2 counter |
@@ -3456,6 +3973,147 @@ A message of PUBLISH went out.
 - Once for each PUBLISH.
 
 
+## Type `PartialSubscribeEvent`
+
+The application joins a topic, with partial flags.
+
+### Layout
+
+| Offset | Field | Type | Meaning |
+|---|---|---|---|
+| 16 | `flags` | u64 | `LIBP2P_PARTIAL_REQUESTS`, `LIBP2P_PARTIAL_SUPPORTS`, both, or 0 |
+| 24 | `topic_len` | u64 | Bytes of the topic, 1 to `LIBP2P_MAX_TOPIC` |
+| 32 | `topic` | `topic_len` bytes | The topic |
+
+### Rules
+
+- Kind `LIBP2P_EVENT_PARTIAL_SUBSCRIBE`; the size covers the topic.
+- Flags other than 0 need `partial_messages` on.
+- REQUESTS implies SUPPORTS.
+- On a topic we subscribe to, it changes the flags and peers hear the new SubOpts.
+
+
+## Type `PartialPeersEvent`
+
+The application asks which peers of a topic take part in partial messages.
+
+### Layout
+
+| Offset | Field | Type | Meaning |
+|---|---|---|---|
+| 16 | `topic_len` | u64 | Bytes of the topic, 1 to `LIBP2P_MAX_TOPIC` |
+| 24 | `topic` | `topic_len` bytes | The topic |
+
+### Rules
+
+- Kind `LIBP2P_EVENT_PARTIAL_PEERS`; the size covers the topic.
+- It ends in PARTIAL_PEERS in the same step.
+
+
+## Type `PartialSendEvent`
+
+The application sends partial message data or metadata to one peer.
+
+### Layout
+
+| Offset | Field | Type | Meaning |
+|---|---|---|---|
+| 16 | `peer` | u64: a handle ([`Handle`](node.md#type-handle)) | The peer |
+| 24 | `topic_len` | u64 | Bytes of the topic, 1 to `LIBP2P_MAX_TOPIC` |
+| 32 | `group_len` | u64 | Bytes of the group ID, at most `max_rpc` |
+| 40 | `meta_len` | u64 | Bytes of the parts metadata, at most `max_rpc`; 0: none |
+| 48 | `msg_len` | u64 | Bytes of the partial message, at most `max_rpc`; 0: none |
+| 56 | `bytes` | bytes | The topic, the group ID, the metadata and the message, each at a multiple of 8 |
+
+### Rules
+
+- Kind `LIBP2P_EVENT_PARTIAL_SEND`; the size covers the bytes.
+- The encoding of the group ID, the metadata and the message is the application's.
+- A peer that does not want partial messages on the topic gets the metadata only.
+
+
+## Type `PartialScoreEvent`
+
+The application judges partial message data of a peer.
+
+### Layout
+
+| Offset | Field | Type | Meaning |
+|---|---|---|---|
+| 16 | `peer` | u64: a handle ([`Handle`](node.md#type-handle)) | The peer |
+| 24 | `result` | u64 | `LIBP2P_ACCEPT` or `LIBP2P_REJECT` |
+| 32 | `topic_len` | u64 | Bytes of the topic, 1 to `LIBP2P_MAX_TOPIC` |
+| 40 | `topic` | `topic_len` bytes | The topic |
+
+### Rules
+
+- Kind `LIBP2P_EVENT_PARTIAL_SCORE`; the size covers the topic.
+- ACCEPT counts as a first delivery; REJECT as an invalid message.
+
+
+## Type `PartialAction`
+
+A peer sent a PartialMessagesExtension.
+
+### Layout
+
+| Offset | Field | Type | Meaning |
+|---|---|---|---|
+| 16 | `peer` | u64: a handle ([`Handle`](node.md#type-handle)) | The peer that sent it |
+| 24 | `flags` | u64 | The `LIBP2P_PARTIAL_*` flags of the peer on the topic |
+| 32 | `topic_len` | u64 | Bytes of the topic |
+| 40 | `group_off` | u64 | Where the group ID is, from the start of the state |
+| 48 | `group_len` | u64 | Bytes of the group ID |
+| 56 | `meta_off` | u64 | Where the parts metadata is; 0 with none |
+| 64 | `meta_len` | u64 | Bytes of the parts metadata |
+| 72 | `msg_off` | u64 | Where the partial message is; 0 with none |
+| 80 | `msg_len` | u64 | Bytes of the partial message |
+| 88 | `topic` | `topic_len` bytes | The topic |
+
+### Rules
+
+- Kind `LIBP2P_ACTION_PARTIAL`; the size covers the topic.
+- The group ID, metadata and message are valid until the next step.
+- It comes for any topic, also one we do not subscribe to.
+- A message comes only on a topic we want partial messages on.
+
+
+## Type `PartialPeersAction`
+
+The peers of a topic to send partial messages to.
+
+### Layout
+
+| Offset | Field | Type | Meaning |
+|---|---|---|---|
+| 16 | `topic_len` | u64 | Bytes of the topic |
+| 24 | `count` | u64 | Peers in the list |
+| 32 | `topic` | `topic_len` bytes | The topic; the list follows at the next multiple of 8: `count` pairs of a peer handle and its `LIBP2P_PARTIAL_*` flags |
+
+### Rules
+
+- Kind `LIBP2P_ACTION_PARTIAL_PEERS`; the size covers the topic and the list.
+- It answers PARTIAL_PEERS.
+
+
+## Type `PartialGossipAction`
+
+Gossip peers of a heartbeat that get partial messages from us.
+
+### Layout
+
+| Offset | Field | Type | Meaning |
+|---|---|---|---|
+| 16 | `topic_len` | u64 | Bytes of the topic |
+| 24 | `count` | u64 | Peers in the list |
+| 32 | `topic` | `topic_len` bytes | The topic; the list follows at the next multiple of 8: `count` peer handles |
+
+### Rules
+
+- Kind `LIBP2P_ACTION_PARTIAL_GOSSIP`; the size covers the topic and the list.
+- The heartbeat gives it in place of IHAVE to these peers: the application may send them partial messages.
+
+
 ## Type `PeerTopicAction`
 
 A peer joined or left a topic.
@@ -3477,683 +4135,11 @@ A peer joined or left a topic.
 
 ## Test vectors
 
-- Scenarios of [tests/runner/runner.c](../../tests/runner/runner.c): gossip (6 nodes), gossip_lazy, scoring, secondary, idontwant (fewer duplicates with IDONTWANT, and a node of v1.1 only).
-- gossipsub-interop of libp2p/test-plans ([tests/gossipsub/](../../tests/gossipsub/)): networks shared with go, rust, jvm and nim.
+- Scenarios of [tests/runner/runner.c](../../tests/runner/runner.c): gossip (6 nodes), gossip_lazy, scoring, secondary, idontwant (fewer duplicates with IDONTWANT, and a node of v1.1 only), partial (the Extensions control message, partial flags, PARTIAL_PEERS, PARTIAL_SEND, full messages routed around partial peers, PARTIAL_GOSSIP, and a node of v1.2 only).
+- gossipsub-interop of libp2p/test-plans ([tests/gossipsub/](../../tests/gossipsub/)): networks shared with go, rust, jvm and nim, and partial message networks shared with go, rust and nim.
 - The shell loop test ([tests/shell/loop.c](../../tests/shell/loop.c)): one message between two nodes on every OS.
 - The live test on Ethereum mainnet ([tests/mainnet/](../../tests/mainnet/)): beacon blocks and attestations from peers of every client.
 
 ## Results
 
 <!-- CI generates the tick table for each function here. -->
-
-### `libp2p_peer_at`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_peer_idx`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_topic_at`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_topic_idx`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_pt`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_topic_find`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_topic_get`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_topic_tidy`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_ready`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_idx_find`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_idx_add`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_idx_del`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_seen_args`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_seen_find`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_seen_drop_tail`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_seen_tail`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_seen_add`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_seen_args_keep`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_seen_expire`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mc_args`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mc_find`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mc_tail`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mc_drop_tail`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mc_put`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mc_shift`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mc_sent`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_pend`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_pend_free`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_pend_status`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_promise_add`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_promise_keep`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_promise_drop_peer`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_dw_ring`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_dontwant`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_alloc`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_push`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_pb_head`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_rpc`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_send_sub`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_send_msg`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_send_graft`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_send_prune`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_send_ids`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_idontwant`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_announce`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gossip_peer_up`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gossip_peer_down`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gossip_out_ready`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gossip_in_ready`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gossip_rx`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_rpc_handle`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_field_bytes`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_peer_topic`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_rpc_sub`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_rpc_msg`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_rpc_control`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_backoff_secs`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_prune_to`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_ctl_graft`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_ctl_prune`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_ctl_ihave`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_ctl_iwant`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_ctl_idontwant`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mesh_add`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mesh_remove`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_candidates`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_shuffle`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_on_subscribe`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_fanout_clear_topic`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_on_unsubscribe`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_on_publish`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_on_message_id`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_on_validation`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_seen_delivered`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gossip_timers`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_heartbeat`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_list_score`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_list_outbound`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_sort_score`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_add_from_list`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mesh_maintain`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_keep_outbound`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_fanout_maintain`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_emit_gossip`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |

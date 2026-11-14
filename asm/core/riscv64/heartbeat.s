@@ -556,9 +556,13 @@ END_FUNCTION libp2p_fanout_maintain
  * libp2p_emit_gossip(topic index): the IDs of the topic's messages in the last
  * mcache_gossip windows (at most max_ihave_length, chosen at random) go as
  * IHAVE to max(D_lazy, gossip_factor x candidates) peers at random that are
- * not in the mesh or fanout and are at or above gossip_threshold.
- * s1 topic index, s2 topic, s3 IDs, s4 ID count, s5 i, s6 list, s7 count,
- * s8 the first window.
+ * not in the mesh or fanout and are at or above gossip_threshold. Of those
+ * peers, the ones that get partial messages of the topic from us
+ * (libp2p_wants_partial) get no IHAVE: PARTIAL_GOSSIP lists them for the
+ * application, also when there are no IDs.
+ * s1 topic index, s2 topic, s3 IDs then the list of the action, s4 ID
+ * count, s5 i, s6 list, s7 count then the action, s8 the first window then
+ * the partial count.
  */
 LOCAL_FUNCTION libp2p_emit_gossip
     ENTER   0
@@ -598,8 +602,11 @@ LOCAL_FUNCTION libp2p_emit_gossip
     addi    s4, s4, 1
 3:  addi    s5, s5, 1
     j       2b
-4:  beqz    s4, 9f
-    CFG     t0, LIBP2P_CFG_MAX_IHAVE_LENGTH # at most max_ihave_length of them, at random
+4:  bnez    s4, 40f
+    ld      t0, T_FLAGS(s2)                 # no IDs: partial gossip only
+    andi    t0, t0, TF_SUPPORTS_PARTIAL
+    beqz    t0, 9f
+40: CFG     t0, LIBP2P_CFG_MAX_IHAVE_LENGTH # at most max_ihave_length of them, at random
     bgeu    t0, s4, 5f
     mv      s5, t0
     mv      s6, s4
@@ -645,7 +652,23 @@ LOCAL_FUNCTION libp2p_emit_gossip
 52: bgeu    t0, s7, 53f
     mv      s7, t0
 53: li      s5, 0
-6:  bgeu    s5, s7, 9f
+    li      s8, 0
+6:  bgeu    s5, s7, 7f
+    slli    t0, s5, 2
+    add     t0, s6, t0
+    lwu     a0, 0(t0)
+    mv      a1, s1
+    call    libp2p_wants_partial
+    beqz    a0, 61f
+    slli    t0, s5, 2                       # partial gossip: to the front of the list
+    add     t0, s6, t0
+    lwu     t1, 0(t0)
+    slli    t0, s8, 2
+    add     t0, s6, t0
+    sw      t1, 0(t0)
+    addi    s8, s8, 1
+    j       62f
+61: beqz    s4, 62f
     slli    t0, s5, 2
     add     t0, s6, t0
     lwu     a0, 0(t0)
@@ -655,7 +678,39 @@ LOCAL_FUNCTION libp2p_emit_gossip
     mv      a3, s4
     li      a4, 1
     call    libp2p_gs_send_ids
-    addi    s5, s5, 1
+62: addi    s5, s5, 1
     j       6b
+7:  beqz    s8, 9f                          # PARTIAL_GOSSIP
+    ld      t0, T_LEN(s2)
+    addi    t0, t0, (LIBP2P_ACT_PL_TOPIC + 7)
+    andi    s5, t0, ~7
+    slli    a1, s8, 3
+    add     a1, a1, s5
+    li      a0, LIBP2P_ACTION_PARTIAL_GOSSIP
+    call    libp2p_action
+    beqz    a0, 9f
+    mv      s7, a0
+    ld      a2, T_LEN(s2)
+    sd      a2, LIBP2P_ACT_PL_TOPIC_LEN(s7)
+    sd      s8, LIBP2P_ACT_PL_COUNT(s7)
+    addi    a0, s7, LIBP2P_ACT_PL_TOPIC
+    addi    a1, s2, T_NAME
+    call    libp2p_copy
+    add     s3, s7, s5
+    li      s5, 0
+8:  bgeu    s5, s8, 9f
+    slli    t0, s5, 2
+    add     t0, s6, t0
+    lwu     a0, 0(t0)
+    call    libp2p_peer_at
+    mv      a2, a0
+    li      a0, ST_PEER_OFF
+    li      a1, P_SIZE
+    call    libp2p_handle
+    slli    t0, s5, 3
+    add     t0, s3, t0
+    sd      a0, 0(t0)
+    addi    s5, s5, 1
+    j       8b
 9:  LEAVE   0
 END_FUNCTION libp2p_emit_gossip

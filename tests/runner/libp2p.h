@@ -64,7 +64,8 @@ typedef struct {
     uint8_t pv[32];
     uint64_t gossipsub_v12, idontwant_threshold, dontwant_slots, dontwant_ttl, max_idontwant_messages,
         max_idontwant_length;
-} libp2p_config;                                    /* LIBP2P_CFG_FIXED = 688 bytes */
+    uint64_t gossipsub_v13, partial_messages;
+} libp2p_config;                                    /* LIBP2P_CFG_FIXED = 704 bytes */
 
 typedef struct {
     double weight, time_weight;
@@ -79,13 +80,16 @@ typedef struct { uint64_t now; uint8_t entropy[32]; } libp2p_tick;
 enum {
     EV_ACCEPTED = 1, EV_CONNECTED, EV_DIAL_FAILED, EV_RECEIVED, EV_SENT, EV_CLOSED, EV_DIAL, EV_DISCONNECT,
     EV_OPEN_STREAM, EV_STREAM_WRITE, EV_STREAM_CLOSE, EV_STREAM_RESET, EV_SUBSCRIBE, EV_UNSUBSCRIBE, EV_PUBLISH,
-    EV_MESSAGE_ID, EV_VALIDATION, EV_APP_SCORE, EV_TOPIC_PARAMS,
+    EV_MESSAGE_ID, EV_VALIDATION, EV_APP_SCORE, EV_TOPIC_PARAMS, EV_PARTIAL_SUBSCRIBE, EV_PARTIAL_PEERS,
+    EV_PARTIAL_SEND, EV_PARTIAL_SCORE,
 };
 enum {
     ACT_DIAL = 1, ACT_ADOPT, ACT_REFUSE, ACT_SEND, ACT_CLOSE, ACT_WAKEUP, ACT_PEER_CONNECTED, ACT_PEER_DISCONNECTED,
     ACT_DIAL_FAILED, ACT_STREAM_INBOUND, ACT_STREAM_OPENED, ACT_STREAM_FAILED, ACT_STREAM_DATA, ACT_STREAM_EOF,
-    ACT_STREAM_RESET, ACT_MESSAGE, ACT_MESSAGE_STATUS, ACT_PUBLISHED, ACT_PEER_TOPIC,
+    ACT_STREAM_RESET, ACT_MESSAGE, ACT_MESSAGE_STATUS, ACT_PUBLISHED, ACT_PEER_TOPIC, ACT_PARTIAL,
+    ACT_PARTIAL_PEERS, ACT_PARTIAL_GOSSIP,
 };
+enum { PARTIAL_REQUESTS = 1, PARTIAL_SUPPORTS = 2 };
 enum { LIBP2P_ACCEPT = 1, LIBP2P_REJECT = 2, LIBP2P_IGNORE = 3 };
 enum { MSG_NEW = 1, MSG_DUPLICATE = 2, MSG_DROPPED = 3 };
 
@@ -112,5 +116,16 @@ typedef struct { uint64_t size, kind, handle, peer, data_off, data_len, topic_le
 typedef struct { uint64_t size, kind, handle, status; } act_message_status;
 typedef struct { uint64_t size, kind, id_len; uint8_t id[32]; uint64_t peers; } act_published;
 typedef struct { uint64_t size, kind, peer, subscribed, topic_len; uint8_t topic[]; } act_peer_topic;
+typedef struct { uint64_t size, kind, flags, topic_len; uint8_t topic[]; } ev_partial_subscribe;
+typedef struct { uint64_t size, kind, topic_len; uint8_t topic[]; } ev_partial_peers;
+/* PARTIAL_SEND: then topic, group, metadata and message, each at a multiple of 8. */
+typedef struct { uint64_t size, kind, peer, topic_len, group_len, meta_len, msg_len; uint8_t bytes[]; } ev_partial_send;
+typedef struct { uint64_t size, kind, peer, result, topic_len; uint8_t topic[]; } ev_partial_score;
+typedef struct {
+    uint64_t size, kind, peer, flags, topic_len, group_off, group_len, meta_off, meta_len, msg_off, msg_len;
+    uint8_t topic[];
+} act_partial;
+/* PARTIAL_PEERS (peer and flags pairs) and PARTIAL_GOSSIP (peers): the list after the topic, at a multiple of 8. */
+typedef struct { uint64_t size, kind, topic_len, count; uint8_t topic[]; } act_partial_list;
 
 #endif

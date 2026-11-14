@@ -67,7 +67,8 @@
 .set ST_HEAP_FREE, ST_TABLES + 256      /* free list heads: 48 orders */
 .set ST_HEAP_ORDERS, 48
 .set ST_HEAP_USED, ST_HEAP_FREE + 8 * ST_HEAP_ORDERS
-.set ST_FIXED, ST_HEAP_USED + 8
+.set ST_KEPT_RPC, ST_HEAP_USED + 8      /* heap offset of the first RPC block kept until the next step, or 0 */
+.set ST_FIXED, ST_KEPT_RPC + 8
 
 /* ---------------------------------------------------------------- Heap blocks (buddy allocator) */
 
@@ -248,6 +249,9 @@
 .set PF_GOSSIP, 2                       /* our gossipsub stream is open */
 .set PF_HELLO, 4                        /* our subscriptions were sent */
 .set PF_IDONTWANT, 8                    /* our stream speaks /meshsub/1.2.0: the peer gets IDONTWANT */
+.set PF_EXT_SEEN, 16                    /* the first RPC of the peer came: its extensions are known */
+.set PF_EXT_GOT, 32                     /* the peer sent its Extensions control message */
+.set PF_PARTIAL, 64                     /* the peer has the Partial Messages extension */
 
 /* ---------------------------------------------------------------- Topic slot */
 
@@ -266,6 +270,8 @@
 /* Topic flags. */
 .set TF_SUBSCRIBED, 1
 .set TF_PARAMS, 2
+.set TF_REQUESTS_PARTIAL, 4             /* LIBP2P_PARTIAL_REQUESTS << 2: we want partial messages on it */
+.set TF_SUPPORTS_PARTIAL, 8             /* LIBP2P_PARTIAL_SUPPORTS << 2: we send partial messages on it */
 
 /* ---------------------------------------------------------------- Peer x topic entry */
 
@@ -282,6 +288,8 @@
 .set PTF_SUBSCRIBED, 1                  /* the peer said it subscribes */
 .set PTF_MESH, 2
 .set PTF_FANOUT, 4
+.set PTF_REQUESTS_PARTIAL, 8            /* LIBP2P_PARTIAL_REQUESTS << 3: the peer wants partial messages on it */
+.set PTF_SUPPORTS_PARTIAL, 16           /* LIBP2P_PARTIAL_SUPPORTS << 3: the peer sends partial messages on it */
 
 /* ---------------------------------------------------------------- Seen message */
 

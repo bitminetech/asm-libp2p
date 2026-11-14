@@ -22,6 +22,7 @@ build/macos-arm64/mainnet peers.txt 8c9f62fe 300 300
 - Uses a secp256k1 identity, and offers yamux, then mplex.
 - On each connection, sends a Status request, and answers Status, Ping, Metadata and Goodbye requests (phase0 p2p-interface req/resp).
 - Subscribes to the global gossip topics, computes each message ID as the consensus specs define, and counts new and duplicate messages.
+- Speaks gossipsub v1.3 with the Partial Messages extension: joins the data column subnets 0 to 7 asking for partial messages, and counts PARTIAL actions, the peers that sent them, and the partial peers in the mesh of subnet 0.
 - Reports every message IGNORE, so it never forwards one.
 - Prints each Status response it gets, and a summary every 10 seconds.
 - `ONLY=IP` dials only that address. `TRACE=1` prints the bytes of each connection, and each failure with its address.
