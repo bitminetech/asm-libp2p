@@ -67,7 +67,7 @@ libp2p_identify(stream)
 
 ### Function does
 
-- Queues one Identify protobuf with its varint length: publicKey (1), observedAddr (4, the address of the connection), protocols (3: "/ipfs/id/1.0.0", "/meshsub/1.1.0" and the protocols of the config), then protocolVersion (5) and agentVersion (6) when the config sets them.
+- Queues one Identify protobuf with its varint length: publicKey (1), observedAddr (4, the address of the connection), protocols (3: "/ipfs/id/1.0.0", "/meshsub/1.2.0" when `gossipsub_v12` is on, "/meshsub/1.1.0" and the protocols of the config), then protocolVersion (5) and agentVersion (6) when the config sets them.
 - Then marks the stream to close after the message.
 - Closes the stream without a message when the heap has no block for it.
 
@@ -94,19 +94,3 @@ libp2p_identify(stream)
 ## Results
 
 <!-- CI generates the tick table for each function here. -->
-
-### `libp2p_observed`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_identify`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |

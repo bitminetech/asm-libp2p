@@ -24,7 +24,7 @@
  * config and writes the table offsets and counts at tables (the ST_TABLES
  * fields), in this order: connections, streams, peers, topics, peer x
  * topic, seen, seen index, message cache, its index, pending, promises,
- * protocols, heap.
+ * protocols, IDONTWANT rings, heap.
  * s1 config, s2 tables, s3 offset, s4 to s8 counts.
  */
 LOCAL_FUNCTION libp2p_layout
@@ -102,9 +102,16 @@ LOCAL_FUNCTION libp2p_layout
     beqz    t1, 1f
     ld      t1, LIBP2P_CFG_DECAY_INTERVAL_MS(s1)
     beqz    t1, 80f
+1:  ld      t1, LIBP2P_CFG_GOSSIPSUB_V12(s1)   # gossipsub v1.2
+    RANGE   t1, 0, 1, 80f
+    ld      t1, LIBP2P_CFG_DONTWANT_SLOTS(s1)
+    RANGE   t1, 0, 4096, 80f
+    beqz    t1, 11f
+    ld      t1, LIBP2P_CFG_DONTWANT_TTL(s1)
+    beqz    t1, 80f
 
     /* The protocols part. */
-1:  ld      s8, LIBP2P_CFG_PROTOCOLS_COUNT(s1)
+11: ld      s8, LIBP2P_CFG_PROTOCOLS_COUNT(s1)
     RANGE   s8, 0, 64, 80f
     beqz    s8, 3f
     ld      t1, LIBP2P_CFG_PROTOCOLS(s1)
@@ -196,6 +203,12 @@ LOCAL_FUNCTION libp2p_layout
     li      t0, LIBP2P_PROTO_SIZE
     mul     t0, s8, t0
     add     s3, s3, t0
+    sd      s3, (ST_DW_OFF - ST_TABLES)(s2)
+    ld      t0, LIBP2P_CFG_DONTWANT_SLOTS(s1)
+    mul     t0, t0, s6
+    li      t1, DW_SIZE
+    mul     t0, t0, t1
+    add     s3, s3, t0
     addi    s3, s3, 63                      # the heap, at a multiple of 64
     andi    s3, s3, -64
     ld      t0, LIBP2P_CFG_HEAP_SIZE(s1)
@@ -268,7 +281,7 @@ FUNCTION libp2p_init
     sd      t0, ST_VERSION(s2)
     addi    a0, s2, ST_TABLES
     addi    a1, sp, FL
-    li      a2, (ST_HEAP_SIZE - ST_TABLES + 8)
+    li      a2, (ST_DW_OFF - ST_TABLES + 8)
     call    libp2p_copy
     addi    a0, s2, ST_CONFIG
     mv      a1, s1

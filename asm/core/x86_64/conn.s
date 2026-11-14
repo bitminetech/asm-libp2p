@@ -23,6 +23,8 @@
     .ascii  "/meshsub/1.1.0\n"
 436:
     .ascii  "/ipfs/id/1.0.0\n"
+437:
+    .ascii  "/meshsub/1.2.0\n"
     .p2align 2
 
 /* libp2p_ms_put(dst, str, n) -> dst after one multistream message: varint(n), then the n bytes (the newline included). */

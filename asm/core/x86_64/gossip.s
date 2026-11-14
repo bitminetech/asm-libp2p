@@ -769,6 +769,53 @@ LOCAL_FUNCTION libp2p_promise_drop_peer
 9:  ret
 END_FUNCTION libp2p_promise_drop_peer
 
+/* ---------------------------------------------------------------- IDONTWANT */
+
+/* libp2p_dw_ring(peer index) -> the first entry of the peer's IDONTWANT ring. A leaf. */
+LOCAL_FUNCTION libp2p_dw_ring
+    UNWIND_END_PROLOGUE
+    imul    $DW_SIZE, (ST_CONFIG + LIBP2P_CFG_DONTWANT_SLOTS)(%r15), %rax
+    imul    %rdi, %rax
+    add     ST_DW_OFF(%r15), %rax
+    add     %r15, %rax
+    ret
+END_FUNCTION libp2p_dw_ring
+
+/*
+ * libp2p_dontwant(peer index, id, n) -> 1 when the peer sent IDONTWANT for
+ * the message ID within the last dontwant_ttl heartbeats, else 0.
+ * rbx id, rbp n, r12 entry, r13 entries left.
+ */
+LOCAL_FUNCTION libp2p_dontwant
+    ENTER   0
+    mov     %rsi, %rbx
+    mov     %rdx, %rbp
+    mov     (ST_CONFIG + LIBP2P_CFG_DONTWANT_SLOTS)(%r15), %r13
+    test    %r13, %r13
+    jz      8f
+    call    libp2p_dw_ring
+    mov     %rax, %r12
+1:  cmp     DW_ID_LEN(%r12), %rbp
+    jne     2f
+    mov     ST_HEARTBEATS(%r15), %rax
+    sub     DW_HB(%r12), %rax
+    cmp     (ST_CONFIG + LIBP2P_CFG_DONTWANT_TTL)(%r15), %rax
+    jae     2f
+    lea     DW_ID(%r12), %rdi
+    mov     %rbx, %rsi
+    mov     %rbp, %rdx
+    call    libp2p_equal
+    test    %rax, %rax
+    jnz     7f
+2:  add     $DW_SIZE, %r12
+    dec     %r13
+    jnz     1b
+8:  xor     %eax, %eax
+    jmp     9f
+7:  mov     $1, %eax
+9:  LEAVE   0
+END_FUNCTION libp2p_dontwant
+
 /* ---------------------------------------------------------------- RPCs out */
 
 /*
@@ -1031,9 +1078,10 @@ END_FUNCTION libp2p_gs_send_prune
 
 /*
  * libp2p_gs_send_ids(peer, topic, list, count, kind): control with one IHAVE
- * (kind 1: topicID, then messageIDs as field 2) or one IWANT (kind 2:
- * messageIDs as field 1). list holds count pairs: the address of an ID,
- * then its length.
+ * (kind 1: topicID, then messageIDs as field 2), one IWANT (kind 2) or one
+ * IDONTWANT (kind 5): messageIDs as field 1, no topic. The kind is the
+ * field of the ControlMessage. list holds count pairs: the address of an
+ * ID, then its length.
  * rbx peer, rbp topic, r12 list, r13 count, X23 kind, X24 inner size,
  * X25 i, X26 chunk; 32(%rsp) the position.
  */
@@ -1109,6 +1157,53 @@ LOCAL_FUNCTION libp2p_gs_send_ids
     call    libp2p_gs_push
 9:  LEAVE   16
 END_FUNCTION libp2p_gs_send_ids
+
+/*
+ * libp2p_gs_idontwant(pending): a new message of idontwant_threshold bytes
+ * or more: IDONTWANT with its ID, at once, to each mesh peer of its topic
+ * that speaks /meshsub/1.2.0, except the peer that sent it.
+ * rbx pending, rbp list, r12 count, r13 i.
+ */
+LOCAL_FUNCTION libp2p_gs_idontwant
+    ENTER   0
+    mov     %rdi, %rbx
+    mov     (ST_CONFIG + LIBP2P_CFG_IDONTWANT_THRESHOLD)(%r15), %rax
+    test    %rax, %rax
+    jz      9f
+    cmp     %rax, PD_DATA_LEN(%rbx)
+    jb      9f
+    SCR     %rcx, SC_IDS                    /* the one ID */
+    lea     PD_ID(%rbx), %rax
+    mov     %rax, (%rcx)
+    mov     PD_ID_LEN(%rbx), %rax
+    mov     %rax, 8(%rcx)
+    movabs  $0xFFF0000000000000, %rax       /* the mesh, at any score: -infinity */
+    movq    %rax, %xmm0
+    mov     PD_TOPIC(%rbx), %rdi
+    mov     $PTF_MESH, %esi
+    xor     %edx, %edx
+    call    libp2p_candidates
+    mov     %rax, %r12
+    SCR     %rbp, SC_LIST
+    xor     %r13d, %r13d
+1:  cmp     %r12, %r13
+    jae     9f
+    movl    (%rbp,%r13,4), %edi
+    cmp     PD_PEER(%rbx), %rdi
+    je      2f
+    call    libp2p_peer_at
+    testq   $PF_IDONTWANT, P_FLAGS(%rax)
+    jz      2f
+    mov     %rax, %rdi
+    xor     %esi, %esi
+    SCR     %rdx, SC_IDS
+    mov     $1, %ecx
+    mov     $5, %r8d
+    call    libp2p_gs_send_ids
+2:  inc     %r13
+    jmp     1b
+9:  LEAVE   0
+END_FUNCTION libp2p_gs_idontwant
 
 /* libp2p_gs_announce(topic, subscribe): our subscription change, to every gossipsub peer. rbx topic, rbp subscribe, r12 peer, r13 left. */
 LOCAL_FUNCTION libp2p_gs_announce

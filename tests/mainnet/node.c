@@ -599,6 +599,9 @@ int main(int argc, char **argv) {
     memcpy(c->agent, "asm-libp2p/0.1.0", c->agent_len);
     c->pv_len = strlen("eth2/1.0.0");
     memcpy(c->pv, "eth2/1.0.0", c->pv_len);
+    c->gossipsub_v12 = 1;                   /* gossipsub v1.2, with the IDONTWANT defaults of go-libp2p-pubsub */
+    c->idontwant_threshold = 1024; c->dontwant_slots = 256; c->dontwant_ttl = 3;
+    c->max_idontwant_messages = 1000; c->max_idontwant_length = 10;
 
     uint64_t size = 0;
     if (libp2p_state_size(&cfg, &size)) die("libp2p_state_size");

@@ -91,6 +91,18 @@ static void fnv(const void *p, size_t n) {
     }
 }
 
+/* The message ID of the runner: the first 20 bytes of SHA-256 of the data. */
+static void msg_id(const void *data, size_t n, uint8_t *id) {
+    uint8_t *bl = xmalloc(24 + n), d[32];
+    ((uint64_t *)bl)[0] = 24 + n;
+    ((uint64_t *)bl)[1] = 24;
+    ((uint64_t *)bl)[2] = n;
+    memcpy(bl + 24, data, n);
+    crypto_sha256(bl, d);
+    free(bl);
+    memcpy(id, d, 20);
+}
+
 /* ---------------------------------------------------------------- Nodes */
 
 #define MAX_NODES 8
@@ -172,6 +184,8 @@ typedef struct {
     int key_type;
     uint64_t muxers, max_connections, d, d_low, d_high, d_lazy, scoring;
     int clone;                         /* 1 + the index of a node whose key this node uses, or 0 */
+    int v11;                           /* 1: gossipsub v1.1 only */
+    int no_idontwant;                  /* 1: no IDONTWANT sent, none heard */
 } node_opts;
 
 typedef struct {
@@ -255,6 +269,12 @@ static void config_for(config_rec *cfg, int index, const node_opts *o) {
     memcpy(c->agent, "asm-runner", 10);
     c->pv_len = 10;
     memcpy(c->pv, "ipfs/0.1.0", 10);
+    c->gossipsub_v12 = !o->v11;
+    c->idontwant_threshold = o->no_idontwant ? 0 : 1024;   /* go-libp2p-pubsub IDontWantMessageThreshold */
+    c->dontwant_slots = o->no_idontwant ? 0 : 64;
+    c->dontwant_ttl = 3;                                    /* IDontWantMessageTTL */
+    c->max_idontwant_messages = 1000;                       /* MaxIDontWantMessages */
+    c->max_idontwant_length = 10;                           /* MaxIDontWantLength */
 }
 
 static void make_node(int index, const node_opts *o) {
@@ -535,14 +555,10 @@ static void app_action(int i, uint8_t *p) {
     case ACT_MESSAGE: {
         act_message *a = (act_message *)p;
         const uint8_t *data = (const uint8_t *)n->state + a->data_off;
-        struct { uint64_t size, offset, count; uint8_t b[256]; } bl = {sizeof bl, 24, a->data_len, {0}};
-        if (a->data_len <= sizeof bl.b) memcpy(bl.b, data, a->data_len);
-        uint8_t d[32];
-        crypto_sha256(&bl, d);
         ev_message_id *e = ev_add(n, EV_MESSAGE_ID, sizeof *e);
         e->handle = a->handle;
         e->id_len = 20;
-        memcpy(e->id, d, 20);
+        msg_id(data, a->data_len, e->id);
         if (n->nmsgs < MAX_MSGS) {
             msg_rec *m = &n->msgs[n->nmsgs++];
             m->handle = a->handle;
@@ -665,20 +681,18 @@ static void topic_event(int a, uint64_t kind, const char *topic) {
     memcpy(e + 24, topic, tl);
 }
 
-static void publish(int a, const char *topic, const char *msg) {
-    size_t tl = strlen(topic), ml = strlen(msg), tla = (tl + 7) & ~7ul;
-    struct { uint64_t size, offset, count; uint8_t b[256]; } bl = {sizeof bl, 24, ml, {0}};
-    memcpy(bl.b, msg, ml);
-    uint8_t d[32];
-    crypto_sha256(&bl, d);
+static void publish_n(int a, const char *topic, const void *msg, size_t ml) {
+    size_t tl = strlen(topic), tla = (tl + 7) & ~7ul;
     uint8_t *e = ev_add(&nodes[a], EV_PUBLISH, 72 + tla + ml);
     ((uint64_t *)e)[2] = 20;
-    memcpy(e + 24, d, 20);
+    msg_id(msg, ml, e + 24);
     ((uint64_t *)e)[7] = tl;
     ((uint64_t *)e)[8] = ml;
     memcpy(e + 72, topic, tl);
     memcpy(e + 72 + tla, msg, ml);
 }
+
+static void publish(int a, const char *topic, const char *msg) { publish_n(a, topic, msg, strlen(msg)); }
 
 /* MESSAGE actions with these bytes, whatever their status. */
 static int seen_with(int a, const char *msg) {
@@ -702,7 +716,7 @@ static int new_with(int a, const char *msg) {
 /* Config checks: every out-of-range field gives INVALID_CONFIG; a short state gives BUFFER_TOO_SMALL. */
 static void s_config(void) {
     config_rec cfg, bad;
-    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0};
+    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     config_for(&cfg, 0, &o);
     uint64_t size = 0;
     CHECK(call(F_STATE_SIZE, &cfg, &size, 0, 0, 0, 0) == LIBP2P_OK, "valid config");
@@ -728,6 +742,9 @@ static void s_config(void) {
     BAD(bad.c.max_ihave_length = 8193);
     BAD(bad.c.agent_len = 65);
     BAD(bad.c.pv_len = 33);
+    BAD(bad.c.gossipsub_v12 = 2);
+    BAD(bad.c.dontwant_slots = 4097);
+    BAD(bad.c.dontwant_ttl = 0);
     BAD(bad.c.protocols_count = 65);
     BAD(bad.p[0].len = 0);
     BAD(bad.p[1].bytes[3] = '\n');
@@ -750,7 +767,7 @@ static void s_config(void) {
 
 /* Two nodes connect, open a stream with a fallback protocol, echo, half-close, then disconnect. */
 static void connect_pair(int ka, int kb, uint64_t ma, uint64_t mb) {
-    node_opts oa = {ka, ma, 0, 0, 0, 0, 0, 0, 0}, ob = {kb, mb, 0, 0, 0, 0, 0, 0, 0};
+    node_opts oa = {ka, ma, 0, 0, 0, 0, 0, 0, 0, 0, 0}, ob = {kb, mb, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     make_node(0, &oa);
     make_node(1, &ob);
     dial(0, 1, 1);
@@ -791,7 +808,7 @@ static void s_mplex_first(void) { connect_pair(LIBP2P_KEY_ED25519, LIBP2P_KEY_SE
 
 /* No shared muxer: the dial fails in the upgrade, and no node reports a peer. */
 static void s_no_muxer(void) {
-    node_opts oa = {LIBP2P_KEY_ED25519, 1, 0, 0, 0, 0, 0, 0, 0}, ob = {LIBP2P_KEY_ED25519, 2, 0, 0, 0, 0, 0, 0, 0};
+    node_opts oa = {LIBP2P_KEY_ED25519, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0}, ob = {LIBP2P_KEY_ED25519, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     make_node(0, &oa);
     make_node(1, &ob);
     dial(0, 1, 1);
@@ -802,7 +819,7 @@ static void s_no_muxer(void) {
 
 /* The dialled node is not the expected peer: DIAL_FAILED with reason PEER_ID. */
 static void s_peer_id(void) {
-    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0};
+    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     make_node(0, &o);
     make_node(1, &o);
     make_node(2, &o);
@@ -814,7 +831,7 @@ static void s_peer_id(void) {
 
 /* Refused protocols, a reset, and 1 MiB through each muxer's flow control. */
 static void streams_on(uint64_t muxers) {
-    node_opts o = {LIBP2P_KEY_ED25519, muxers, 0, 0, 0, 0, 0, 0, 0};
+    node_opts o = {LIBP2P_KEY_ED25519, muxers, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     make_node(0, &o);
     make_node(1, &o);
     dial(0, 1, 1);
@@ -852,7 +869,7 @@ static void s_streams_mplex(void) { streams_on(2); }
 
 /* Timeouts: an unanswered dial gives CONNECT; a peer that never answers gives HANDSHAKE. */
 static void s_timeout(void) {
-    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0};
+    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     make_node(0, &o);
     make_node(1, &o);
     make_node(2, &o);
@@ -867,7 +884,7 @@ static void s_timeout(void) {
 
 /* Garbage bytes at a listener and at a dialer close the connection; nothing breaks. */
 static void s_garbage(void) {
-    node_opts o = {LIBP2P_KEY_SECP256K1, 0, 0, 0, 0, 0, 0, 0, 0};
+    node_opts o = {LIBP2P_KEY_SECP256K1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     make_node(0, &o);
     make_node(1, &o);
     nodes[1].dead = 1;                                /* node 1's core never answers; the runner sends garbage */
@@ -888,7 +905,7 @@ static void s_garbage(void) {
 
 /* Malformed events and short buffers: an error status, nothing accepted, the state unchanged. */
 static void s_errors(void) {
-    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0};
+    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     make_node(0, &o);
     node *n = &nodes[0];
     uint8_t *before = xmalloc(n->state_size);
@@ -934,7 +951,7 @@ static void s_errors(void) {
 
 /* Both nodes dial each other at once: one connection stays, each side sees one peer. */
 static void s_simultaneous(void) {
-    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0};
+    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     make_node(0, &o);
     make_node(1, &o);
     dial(0, 1, 1);
@@ -949,7 +966,7 @@ static void s_simultaneous(void) {
 
 /* A node with room for 2 connections refuses the third. */
 static void s_limits(void) {
-    node_opts small = {LIBP2P_KEY_ED25519, 0, 2, 0, 0, 0, 0, 0, 0}, o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0};
+    node_opts small = {LIBP2P_KEY_ED25519, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0}, o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     make_node(0, &small);
     for (int i = 1; i <= 3; i++) make_node(i, &o);
     for (int i = 1; i <= 3; i++) {
@@ -963,7 +980,7 @@ static void s_limits(void) {
 
 /* Six nodes in a graph: every message reaches every node once; a rejecting node does not forward. */
 static void gossip_on(uint64_t d, uint64_t d_low, uint64_t d_high, uint64_t d_lazy) {
-    node_opts o = {LIBP2P_KEY_SECP256K1, 0, 0, d, d_low, d_high, d_lazy, 0, 0};
+    node_opts o = {LIBP2P_KEY_SECP256K1, 0, 0, d, d_low, d_high, d_lazy, 0, 0, 0, 0};
     for (int i = 0; i < 6; i++) make_node(i, &o);
     static const int edges[][2] = {{0, 1}, {0, 2}, {1, 2}, {1, 3}, {2, 4}, {3, 4}, {3, 5}, {4, 5}};
     for (size_t k = 0; k < sizeof edges / sizeof edges[0]; k++) dial(edges[k][0], edges[k][1], edges[k][1]);
@@ -1005,7 +1022,7 @@ static void s_gossip(void) { gossip_on(0, 0, 0, 0); }
  */
 static void s_secondary(void) {
     const char *t = "/eth2/00000000/beacon_block/ssz_snappy";
-    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0}, c = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 1};
+    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, c = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0};
     make_node(0, &o);
     make_node(1, &o);
     make_node(2, &c);
@@ -1054,7 +1071,7 @@ static void topic_params(int a, const char *topic) {
  */
 static void s_scoring(void) {
     const char *t = "/eth2/00000000/voluntary_exit/ssz_snappy";
-    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 1, 0};
+    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0};
     for (int i = 0; i < 3; i++) make_node(i, &o);
     dial(0, 1, 1);
     dial(0, 2, 2);
@@ -1098,25 +1115,82 @@ typedef struct {
     uint64_t want;                     /* the transcript digest on ARM64; 0 before it is recorded */
 } scenario_rec;
 
+/* MESSAGE actions of a new message whose data starts with the tag. */
+static int new_tagged(int a, const char *tag) {
+    int c = 0;
+    for (int k = 0; k < nodes[a].nmsgs; k++)
+        c += nodes[a].msgs[k].status == MSG_NEW && !memcmp(nodes[a].msgs[k].data, tag, strlen(tag));
+    return c;
+}
+
+/*
+ * One round of gossipsub v1.2: four nodes, each connected to the others, D 3.
+ * Nodes 0, 1 and 2 each publish a message of 2048 bytes, and every other
+ * node gets each once. The duplicates of all nodes go to dups.
+ */
+static void idontwant_round(int no_idontwant, int v11_node, int *dups) {
+    const char *t = "/eth2/00000000/blob_sidecar_0/ssz_snappy";
+    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 3, 2, 4, 0, 0, 0, 0, no_idontwant}, old = o;
+    old.v11 = 1;
+    for (int i = 0; i < 4; i++) make_node(i, i == v11_node ? &old : &o);
+    for (int a = 0; a < 4; a++)
+        for (int b = a + 1; b < 4; b++) dial(a, b, b);
+    run(80, 10, 1);
+    for (int i = 0; i < 4; i++) topic_event(i, EV_SUBSCRIBE, t);
+    run(40, 100, 0);                                  /* heartbeats build the meshes */
+    static uint8_t big[2048];
+    char tag[8];
+    for (int k = 0; k < 3; k++) {
+        memset(big, 'a' + k, sizeof big);
+        snprintf(tag, sizeof tag, "big-%d", k);
+        memcpy(big, tag, strlen(tag));
+        publish_n(k, t, big, sizeof big);
+        run(40, 100, 0);
+        for (int i = 0; i < 4; i++)
+            CHECK(i == k || new_tagged(i, tag) == 1, "node %d %s x%d", i, tag, new_tagged(i, tag));
+    }
+    *dups = 0;
+    for (int i = 0; i < 4; i++) *dups += nodes[i].dup_msgs;
+    free_nodes();
+}
+
+/*
+ * gossipsub v1.2: with IDONTWANT, the nodes send each other fewer duplicates
+ * of large messages than without it. A node of gossipsub v1.1 only gets
+ * every message through /meshsub/1.1.0.
+ */
+static void s_idontwant(void) {
+    int with, without, mixed;
+    idontwant_round(0, -1, &with);
+    idontwant_round(1, -1, &without);
+    idontwant_round(0, 3, &mixed);
+    printf("  duplicates: %d with IDONTWANT, %d without, %d with a v1.1 node\n", with, without, mixed);
+    CHECK(with < without, "duplicates with IDONTWANT %d, without %d", with, without);
+    fnv(&with, sizeof with);
+    fnv(&without, sizeof without);
+    fnv(&mixed, sizeof mixed);
+}
+
 static const scenario_rec SCENARIOS[] = {
-    {"config", s_config, 0xecaf917ba2b4cabcull},
-    {"yamux", s_yamux, 0x498331fdde0bdcd0ull},
-    {"mplex", s_mplex, 0x2bec181620988f81ull},
-    {"fallback", s_fallback, 0x367bd89c7bc4804cull},
-    {"mplex_first", s_mplex_first, 0x60a5a252ed2f4a41ull},
+    {"config", s_config, 0x0b647a578e62468eull},
+    {"yamux", s_yamux, 0xe787b23a61e8b42full},
+    {"mplex", s_mplex, 0x00807cdbc0cdadbbull},
+    {"fallback", s_fallback, 0x228a1d4b2ba9c0b8ull},
+    {"mplex_first", s_mplex_first, 0xdd71ff74aa391643ull},
     {"no_muxer", s_no_muxer, 0x9bcf6f37f9f50903ull},
     {"peer_id", s_peer_id, 0x3565954a455e52c8ull},
-    {"streams_yamux", s_streams_yamux, 0x83efdf651b74537full},
-    {"streams_mplex", s_streams_mplex, 0x8bd6fd118583afa3ull},
+    {"streams_yamux", s_streams_yamux, 0x500067afac691a78ull},
+    {"streams_mplex", s_streams_mplex, 0xbbfbdc9efee4994dull},
     {"timeout", s_timeout, 0xffe7d7d1ebefd1d2ull},
     {"garbage", s_garbage, 0x72e765f2cdbb24c0ull},
     {"errors", s_errors, 0x66d7d610da0370a5ull},
-    {"simultaneous", s_simultaneous, 0xded32ff5e18ea801ull},
-    {"limits", s_limits, 0x82226048cd97cfdcull},
-    {"gossip", s_gossip, 0x4286ab614283e3eeull},
-    {"gossip_lazy", s_gossip_lazy, 0xb4596d1fd44766d4ull},
-    {"secondary", s_secondary, 0x40a1b288a49a510aull},
-    {"scoring", s_scoring, 0x1eb74acee36ebf67ull},
+    {"simultaneous", s_simultaneous, 0x15b985f33855cdafull},
+    {"limits", s_limits, 0x953be2219c28903dull},
+    {"gossip", s_gossip, 0x7fba4d744964c04bull},
+    {"gossip_lazy", s_gossip_lazy, 0x640a48e505d6589bull},
+    {"secondary", s_secondary, 0x0a01c75c293f3cd1ull},
+    {"scoring", s_scoring, 0x136a493f52e41608ull},
+    {"idontwant", s_idontwant, 0x75cf64a916ab9726ull},
 };
 
 int main(int argc, char **argv) {

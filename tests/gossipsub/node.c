@@ -443,8 +443,8 @@ static uint64_t param_ms(const jv *gs, const char *key, uint64_t fallback_ms) {
  * The gossipsub config. A field that gossipSubParams leaves out takes the
  * default of go-libp2p-pubsub a01777894f4c (gossipsub.go), the version the
  * go node of the suite builds. HeartbeatInitialDelay, PrunePeers, the
- * connection fields, SlowHeartbeatWarning and the IDONTWANT fields have no
- * field in the config.
+ * connection fields and SlowHeartbeatWarning have no field in the config.
+ * The node speaks gossipsub v1.2 and keeps 256 IDs of IDONTWANT per peer.
  */
 static void gossip_config(libp2p_config *c, const jv *gs) {
     c->d = param_u(gs, "D", 6);
@@ -471,6 +471,13 @@ static void gossip_config(libp2p_config *c, const jv *gs) {
     c->iwant_followup_ms = param_ms(gs, "IWantFollowupTime", 3000);
     c->seen_ttl_ms = 120000;                /* TimeCacheDuration */
     c->flood_publish = 1;
+    c->gossipsub_v12 = 1;
+    c->idontwant_threshold = param_u(gs, "IDontWantMessageThreshold", 1024);
+    c->dontwant_slots = 256;
+    c->dontwant_ttl = param_u(gs, "IDontWantMessageTTL", 3);
+    if (!c->dontwant_ttl) c->dontwant_ttl = 1;
+    c->max_idontwant_messages = param_u(gs, "MaxIDontWantMessages", 1000);
+    c->max_idontwant_length = param_u(gs, "MaxIDontWantLength", 10);
 }
 
 /* ---------------------------------------------------------------- The script */

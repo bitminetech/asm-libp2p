@@ -117,6 +117,8 @@ static void make_node(node *n, const char *name, uint64_t key_type, uint64_t mux
         c->prune_backoff_ms = 60000; c->unsub_backoff_ms = 10000; c->graft_flood_ms = 10000; c->flood_publish = 1;
         c->gossip_factor = 0.25; c->max_ihave_length = 5000; c->max_ihave_messages = 10; c->iwant_followup_ms = 3000;
         c->retransmission = 3; c->opportunistic_ticks = 60; c->opportunistic_peers = 2;
+        c->gossipsub_v12 = 1; c->idontwant_threshold = 1024; c->dontwant_slots = 64; c->dontwant_ttl = 3;
+        c->max_idontwant_messages = 1000; c->max_idontwant_length = 10;
         uint64_t size = 0;
         if (libp2p_state_size(&cfg, &size)) fail("libp2p_state_size");
         free(n->state);

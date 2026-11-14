@@ -54,16 +54,17 @@
 .set ST_PROTO_COUNT, ST_TABLES + 160
 .set ST_HEAP_OFF, ST_TABLES + 168
 .set ST_HEAP_SIZE, ST_TABLES + 176
+.set ST_DW_OFF, ST_TABLES + 184         /* IDONTWANT rings: dontwant_slots entries for each peer */
 /* running values */
-.set ST_SEEN_HEAD, ST_TABLES + 184      /* ring: next entry to write */
-.set ST_SEEN_USED, ST_TABLES + 192
-.set ST_MC_HEAD, ST_TABLES + 200
-.set ST_MC_USED, ST_TABLES + 208
-.set ST_HEARTBEAT_AT, ST_TABLES + 216   /* ms */
-.set ST_HEARTBEATS, ST_TABLES + 224     /* heartbeat count: the mcache window */
-.set ST_DECAY_AT, ST_TABLES + 232       /* ms */
-.set ST_CONN_LIVE, ST_TABLES + 240
-.set ST_HEAP_FREE, ST_TABLES + 248      /* free list heads: 48 orders */
+.set ST_SEEN_HEAD, ST_TABLES + 192      /* ring: next entry to write */
+.set ST_SEEN_USED, ST_TABLES + 200
+.set ST_MC_HEAD, ST_TABLES + 208
+.set ST_MC_USED, ST_TABLES + 216
+.set ST_HEARTBEAT_AT, ST_TABLES + 224   /* ms */
+.set ST_HEARTBEATS, ST_TABLES + 232     /* heartbeat count: the mcache window */
+.set ST_DECAY_AT, ST_TABLES + 240       /* ms */
+.set ST_CONN_LIVE, ST_TABLES + 248
+.set ST_HEAP_FREE, ST_TABLES + 256      /* free list heads: 48 orders */
 .set ST_HEAP_ORDERS, 48
 .set ST_HEAP_USED, ST_HEAP_FREE + 8 * ST_HEAP_ORDERS
 .set ST_FIXED, ST_HEAP_USED + 8
@@ -233,7 +234,9 @@
 .set P_IHAVE_IDS, 144                   /* IDs asked for this heartbeat */
 .set P_EXPIRE, 152                      /* ms: a retained score ends then */
 .set P_SCORE, 160                       /* f64: the score at the last heartbeat */
-.set P_SIZE, 168
+.set P_DW_HEAD, 168                     /* the next entry of the IDONTWANT ring to write */
+.set P_DW_COUNT, 176                    /* IDONTWANT messages this heartbeat */
+.set P_SIZE, 184
 
 /* Peer states. */
 .set PS_FREE, 0
@@ -242,8 +245,9 @@
 
 /* Peer flags. */
 .set PF_OUTBOUND, 1
-.set PF_GOSSIP, 2                       /* our /meshsub/1.1.0 stream is open */
+.set PF_GOSSIP, 2                       /* our gossipsub stream is open */
 .set PF_HELLO, 4                        /* our subscriptions were sent */
+.set PF_IDONTWANT, 8                    /* our stream speaks /meshsub/1.2.0: the peer gets IDONTWANT */
 
 /* ---------------------------------------------------------------- Topic slot */
 
@@ -296,6 +300,13 @@
 .set SS_VALID, 1
 .set SS_INVALID, 2
 .set SS_IGNORED, 3
+
+/* ---------------------------------------------------------------- IDONTWANT entry */
+
+.set DW_HB, 0                           /* the heartbeat number when it came */
+.set DW_ID_LEN, 8                       /* 0: empty */
+.set DW_ID, 16                          /* 32 bytes */
+.set DW_SIZE, 48
 
 /* ---------------------------------------------------------------- Message cache entry */
 

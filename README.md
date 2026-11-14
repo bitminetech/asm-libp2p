@@ -2,7 +2,7 @@
 
 libp2p over TCP for an Ethereum consensus client, in assembly.
 
-Noise, multistream-select, yamux and mplex, streams, identify, and gossipsub v1.1 with peer scores. Request/response protocols run in the application, on the stream API.
+Noise, multistream-select, yamux and mplex, streams, identify, and gossipsub v1.1 with peer scores and the IDONTWANT of v1.2. Request/response protocols run in the application, on the stream API.
 
 Standard: [asm-standard@2a19d3f](https://github.com/bitminetech/asm-standard/blob/2a19d3f7fa737af1c01720b6e891703e53a682aa/ARCHITECTURE.md)
 

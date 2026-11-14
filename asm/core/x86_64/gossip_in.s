@@ -9,17 +9,30 @@
 
 /* ---------------------------------------------------------------- Peers */
 
-/* libp2p_gossip_peer_up(peer): a peer connected: open our gossipsub stream to it. */
+/*
+ * libp2p_gossip_peer_up(peer): a peer connected: its IDONTWANT ring is empty,
+ * and our gossipsub stream to it opens, with /meshsub/1.2.0 then
+ * /meshsub/1.1.0 to propose when gossipsub_v12 is on.
+ */
 LOCAL_FUNCTION libp2p_gossip_peer_up
     ENTER   0
     mov     %rdi, %rbx
+    movq    $0, P_DW_HEAD(%rbx)
+    movq    $0, P_DW_COUNT(%rbx)
+    call    libp2p_peer_idx
+    mov     %rax, %rdi
+    call    libp2p_dw_ring
+    mov     %rax, %rdi
+    imul    $DW_SIZE, (ST_CONFIG + LIBP2P_CFG_DONTWANT_SLOTS)(%r15), %rsi
+    call    libp2p_zero
     imul    $C_SIZE, P_CONN(%rbx), %rdi
     add     ST_CONN_OFF(%r15), %rdi
     add     %r15, %rdi
     mov     $SK_GOSSIP_OUT, %esi
     xor     %edx, %edx
     xor     %ecx, %ecx
-    mov     $1, %r8d
+    mov     (ST_CONFIG + LIBP2P_CFG_GOSSIPSUB_V12)(%r15), %r8
+    inc     %r8
     call    libp2p_stream_open
     test    %rax, %rax
     jz      9f
@@ -77,13 +90,23 @@ LOCAL_FUNCTION libp2p_gossip_peer_down
 9:  LEAVE   0
 END_FUNCTION libp2p_gossip_peer_down
 
-/* libp2p_gossip_out_ready(stream): our gossipsub stream to a peer is open: it learns our subscriptions. */
+/*
+ * libp2p_gossip_out_ready(stream): our gossipsub stream to a peer is open: it
+ * learns our subscriptions; with /meshsub/1.2.0 it gets IDONTWANT.
+ */
 LOCAL_FUNCTION libp2p_gossip_out_ready
     ENTER   0
+    mov     %rdi, %r13
     mov     S_PEER(%rdi), %rdi
     call    libp2p_peer_at
     mov     %rax, %rbx
     orq     $(PF_GOSSIP | PF_HELLO), P_FLAGS(%rbx)
+    cmpq    $0, S_PROTO(%r13)               /* /meshsub/1.2.0 is the first proposal */
+    jne     3f
+    cmpq    $0, (ST_CONFIG + LIBP2P_CFG_GOSSIPSUB_V12)(%r15)
+    je      3f
+    orq     $PF_IDONTWANT, P_FLAGS(%rbx)
+3:
     TABLE   %rbp, ST_TOPIC_OFF
     mov     ST_TOPIC_COUNT(%r15), %r12
 1:  test    %r12, %r12
@@ -544,7 +567,7 @@ LOCAL_FUNCTION libp2p_rpc_msg
 9:  LEAVE   16
 END_FUNCTION libp2p_rpc_msg
 
-/* libp2p_rpc_control(peer index, p, n): a ControlMessage: ihave (1), iwant (2), graft (3), prune (4). */
+/* libp2p_rpc_control(peer index, p, n): a ControlMessage: ihave (1), iwant (2), graft (3), prune (4), idontwant (5). */
 LOCAL_FUNCTION libp2p_rpc_control
     ENTER   0
     mov     %rdi, %rbx
@@ -574,8 +597,12 @@ LOCAL_FUNCTION libp2p_rpc_control
     call    libp2p_ctl_graft
     jmp     1b
 4:  cmp     $4, %r9
-    jne     1b
+    jne     5f
     call    libp2p_ctl_prune
+    jmp     1b
+5:  cmp     $5, %r9
+    jne     1b
+    call    libp2p_ctl_idontwant
     jmp     1b
 9:  LEAVE   0
 END_FUNCTION libp2p_rpc_control
@@ -873,7 +900,7 @@ END_FUNCTION libp2p_ctl_ihave
 /*
  * libp2p_ctl_iwant(peer index, p, n): an IWANT from a peer at or above
  * gossip_threshold: each message still in the cache goes to it, at most
- * retransmission times.
+ * retransmission times, unless the peer sent IDONTWANT for it.
  * rbx peer index, rbp p, r12 end, r13 peer, X23 entry.
  */
 LOCAL_FUNCTION libp2p_ctl_iwant
@@ -905,7 +932,13 @@ LOCAL_FUNCTION libp2p_ctl_iwant
     test    %rax, %rax
     jz      1b
     mov     %rax, X23(%rsp)
-    mov     %rax, %rdi
+    mov     %rbx, %rdi
+    lea     MC_ID(%rax), %rsi
+    mov     MC_ID_LEN(%rax), %rdx
+    call    libp2p_dontwant
+    test    %rax, %rax
+    jnz     1b
+    mov     X23(%rsp), %rdi
     mov     %rbx, %rsi
     call    libp2p_mc_sent
     test    %rax, %rax
@@ -923,6 +956,70 @@ LOCAL_FUNCTION libp2p_ctl_iwant
     jmp     1b
 9:  LEAVE   0
 END_FUNCTION libp2p_ctl_iwant
+
+/*
+ * libp2p_ctl_idontwant(peer index, p, n): an IDONTWANT of a peer: up to
+ * max_idontwant_length of its message IDs (1 to LIBP2P_MAX_MSG_ID bytes)
+ * go in the peer's ring with the heartbeat number, each over the oldest.
+ * With no slots, or past max_idontwant_messages in this heartbeat, it is
+ * not heard.
+ * rbx peer index, rbp p, r12 end, r13 peer, X23 IDs left, X24 ring,
+ * X25 slots.
+ */
+LOCAL_FUNCTION libp2p_ctl_idontwant
+    ENTER   0
+    mov     %rdi, %rbx
+    mov     %rsi, %rbp
+    lea     (%rsi,%rdx), %r12
+    mov     (ST_CONFIG + LIBP2P_CFG_DONTWANT_SLOTS)(%r15), %rax
+    test    %rax, %rax
+    jz      9f
+    mov     %rax, X25(%rsp)
+    call    libp2p_peer_at
+    mov     %rax, %r13
+    mov     P_DW_COUNT(%r13), %rax
+    cmp     (ST_CONFIG + LIBP2P_CFG_MAX_IDONTWANT_MESSAGES)(%r15), %rax
+    jae     9f
+    inc     %rax
+    mov     %rax, P_DW_COUNT(%r13)
+    mov     (ST_CONFIG + LIBP2P_CFG_MAX_IDONTWANT_LENGTH)(%r15), %rax
+    mov     %rax, X23(%rsp)
+    mov     %rbx, %rdi
+    call    libp2p_dw_ring
+    mov     %rax, X24(%rsp)
+1:  cmpq    $0, X23(%rsp)
+    je      9f
+    mov     %rbp, %rdi
+    mov     %r12, %rsi
+    call    libp2p_pb_next
+    cmp     $1, %rax
+    jne     9f
+    mov     %r8, %rbp
+    cmp     $1, %rdx
+    jne     1b
+    cmp     $2, %rcx
+    jne     1b
+    decq    X23(%rsp)
+    lea     -1(%rdi), %rax                  /* 1 to LIBP2P_MAX_MSG_ID bytes */
+    cmp     $(LIBP2P_MAX_MSG_ID - 1), %rax
+    ja      1b
+    mov     P_DW_HEAD(%r13), %rax
+    imul    $DW_SIZE, %rax, %rcx
+    add     X24(%rsp), %rcx
+    inc     %rax
+    xor     %edx, %edx
+    cmp     X25(%rsp), %rax
+    cmovae  %rdx, %rax
+    mov     %rax, P_DW_HEAD(%r13)
+    mov     ST_HEARTBEATS(%r15), %rax
+    mov     %rax, DW_HB(%rcx)
+    mov     %rdi, DW_ID_LEN(%rcx)
+    mov     %rdi, %rdx
+    lea     DW_ID(%rcx), %rdi
+    call    libp2p_copy
+    jmp     1b
+9:  LEAVE   0
+END_FUNCTION libp2p_ctl_idontwant
 
 /* ---------------------------------------------------------------- Mesh */
 
@@ -1203,8 +1300,8 @@ END_FUNCTION libp2p_on_unsubscribe
  * libp2p_on_publish(event): our own message. Already seen: not sent. Else it is
  * seen (valid), cached, and sent: with flood_publish to every subscribed
  * peer at or above publish_threshold; else to the mesh, or to the fanout
- * of a topic we do not subscribe to (filled up to D). PUBLISHED gives the
- * number of peers.
+ * of a topic we do not subscribe to (filled up to D); never to a peer that
+ * sent IDONTWANT for it. PUBLISHED gives the number of peers.
  * rbx event, rbp topic, r12 topic index, r13 data block, X23 peers sent,
  * X24 list, X25 count, X26 i.
  */
@@ -1314,6 +1411,14 @@ LOCAL_FUNCTION libp2p_on_publish
     jae     8f
     mov     X24(%rsp), %rcx
     movl    (%rcx,%rax,4), %edi
+    lea     LIBP2P_EV_PUB_ID(%rbx), %rsi
+    mov     LIBP2P_EV_PUB_ID_LEN(%rbx), %rdx
+    call    libp2p_dontwant
+    test    %rax, %rax
+    jnz     71f
+    mov     X26(%rsp), %rax
+    mov     X24(%rsp), %rcx
+    movl    (%rcx,%rax,4), %edi
     call    libp2p_peer_at
     mov     %rax, %rdi
     mov     %rbp, %rsi
@@ -1321,7 +1426,7 @@ LOCAL_FUNCTION libp2p_on_publish
     mov     LIBP2P_EV_PUB_DATA_LEN(%rbx), %rcx
     call    libp2p_gs_send_msg
     add     %rax, X23(%rsp)
-    incq    X26(%rsp)
+71: incq    X26(%rsp)
     jmp     7b
 8:  mov     $LIBP2P_ACTION_PUBLISHED, %edi
     mov     $LIBP2P_ACT_PUB_SIZE, %esi
@@ -1344,7 +1449,8 @@ END_FUNCTION libp2p_on_publish
  * libp2p_on_message_id(event): the ID of a message waiting for one. Seen
  * before: a duplicate (scores, promises), MESSAGE_STATUS duplicate, and
  * the slot is free. Else it is seen (pending), promises of it are kept,
- * and MESSAGE_STATUS new asks for a VALIDATION.
+ * IDONTWANT goes to the mesh at once, and MESSAGE_STATUS new asks for a
+ * VALIDATION.
  * rbx event, rbp pending, r12 seen.
  */
 LOCAL_FUNCTION libp2p_on_message_id
@@ -1393,6 +1499,8 @@ LOCAL_FUNCTION libp2p_on_message_id
     mov     %rax, PD_SEEN(%rbp)
     movl    $PDS_WAIT_VERDICT, PD_STATE(%rbp)
     mov     %rbp, %rdi
+    call    libp2p_gs_idontwant
+    mov     %rbp, %rdi
     mov     $LIBP2P_MSG_NEW, %esi
     call    libp2p_pend_status
 9:  LEAVE   0
@@ -1401,7 +1509,8 @@ END_FUNCTION libp2p_on_message_id
 /*
  * libp2p_on_validation(event): the application judged a new message. ACCEPT:
  * seen valid, first-delivery and mesh-delivery scores, cached, and sent to
- * the mesh of the topic except the peers that already sent it. REJECT:
+ * the mesh of the topic except the peers that already sent it or sent
+ * IDONTWANT for it. REJECT:
  * seen invalid and an invalid message for those peers. IGNORE: seen
  * ignored. Then the slot is free.
  * rbx event, rbp pending, r12 seen, r13 result, X23 topic, X24 i, X25 list,
@@ -1468,6 +1577,14 @@ LOCAL_FUNCTION libp2p_on_validation
     je      31f
     mov     %r12, %rsi
     call    libp2p_seen_delivered
+    test    %rax, %rax
+    jnz     31f
+    mov     X24(%rsp), %rax
+    mov     X25(%rsp), %rcx
+    movl    (%rcx,%rax,4), %edi
+    lea     PD_ID(%rbp), %rsi
+    mov     PD_ID_LEN(%rbp), %rdx
+    call    libp2p_dontwant
     test    %rax, %rax
     jnz     31f
     mov     X24(%rsp), %rax

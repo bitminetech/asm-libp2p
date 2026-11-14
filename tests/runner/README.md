@@ -40,6 +40,7 @@ Name scenarios to run only those, for example `build/linux-arm64/runner gossip s
 | gossip_lazy | The same checks with D 1, D_low 1, D_high 2 and D_lazy 4. |
 | secondary | A peer that dials again gets a secondary connection; when its first connection ends, the second takes over with no PEER_DISCONNECTED, and gossip and new streams work through it. |
 | scoring | Rejected messages and a low application score put a peer below the thresholds: its messages are not heard, and messages no longer go to it. |
+| idontwant | Four nodes, each connected to the others, publish messages of 2048 bytes three times: with gossipsub v1.2, without IDONTWANT, and with one node of v1.1 only. Every node gets each message once, and there are fewer duplicates with IDONTWANT than without. |
 
 ## Transcript digests
 

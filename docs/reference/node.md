@@ -59,7 +59,7 @@
 ## Spec
 
 - Document: [p2p-interface.md](https://github.com/ethereum/consensus-specs/blob/313cbfe561517a81eb11607fea7c6985e562eaa9/specs/phase0/p2p-interface.md), consensus-specs at commit 313cbfe; and [connections/README.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/connections/README.md), libp2p/specs at commit c750236.
-- Section: the network of an Ethereum consensus client: TCP, Noise, mplex and yamux, gossipsub v1.1. ARCHITECTURE.md section 6 gives the event and action model.
+- Section: the network of an Ethereum consensus client: TCP, Noise, mplex and yamux, gossipsub v1.1 and v1.2. ARCHITECTURE.md section 6 gives the event and action model.
 
 ## Function `libp2p_state_size`
 
@@ -263,7 +263,7 @@ libp2p_layout(config, tables) -> status, size
 ### Function does
 
 - Applies every rule of [`Config`](#type-config).
-- Lays out the tables in this order: connections, streams, peers, topics, peer x topic, seen, seen index, message cache, its index, pending, promises, protocols, heap.
+- Lays out the tables in this order: connections, streams, peers, topics, peer x topic, seen, seen index, message cache, its index, pending, promises, protocols, IDONTWANT rings, heap.
 
 ### Function never
 
@@ -1257,6 +1257,12 @@ The limits, keys and parameters of a node.
 | 536 | `agent` | 64 bytes | agentVersion of identify |
 | 600 | `pv_len` | u64 | Bytes of protocolVersion, at most 32 |
 | 608 | `pv` | 32 bytes | protocolVersion of identify |
+| 640 | `gossipsub_v12` | u64 | 1: "/meshsub/1.2.0" is proposed first and accepted; 0: "/meshsub/1.1.0" only |
+| 648 | `idontwant_threshold` | u64 | Data bytes from which a new message gets IDONTWANT; 0: none is sent |
+| 656 | `dontwant_slots` | u64 | Message IDs of IDONTWANT kept for each peer, 0 to 4096; 0: IDONTWANT is not heard |
+| 664 | `dontwant_ttl` | u64 | Heartbeats an ID of IDONTWANT counts, 1 or more with slots |
+| 672 | `max_idontwant_messages` | u64 | IDONTWANT messages heard from a peer per heartbeat |
+| 680 | `max_idontwant_length` | u64 | Message IDs taken from one IDONTWANT |
 
 ### Rules
 
@@ -1484,235 +1490,3 @@ The header of a block of the heap of the state.
 ## Results
 
 <!-- CI generates the tick table for each function here. -->
-
-### `libp2p_state_size`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_init`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_step`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_layout`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_check_event`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_check_addr`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_event_room`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_event`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_timers`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_copy`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_zero`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_equal`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_compare`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_hash`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_heap_alloc`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_heap_free`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_random`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_random_below`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_reseed`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_action`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_room`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_action_shrink`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_wake_at`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_slot`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_conn`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_peer`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_handle`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_alloc_slot`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |

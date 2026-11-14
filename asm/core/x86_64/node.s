@@ -26,7 +26,7 @@
  * config and writes the table offsets and counts at tables (the ST_TABLES
  * fields), in this order: connections, streams, peers, topics, peer x
  * topic, seen, seen index, message cache, its index, pending, promises,
- * protocols, heap.
+ * protocols, IDONTWANT rings, heap.
  * rbx config, rbp tables, r12 offset, r13 connections then other counts;
  * X23 streams, X24 peers, X25 topics, X26 protocols.
  */
@@ -115,9 +115,17 @@ LOCAL_FUNCTION libp2p_layout
     jz      1f
     cmpq    $0, LIBP2P_CFG_DECAY_INTERVAL_MS(%rbx)
     je      80f
+1:  mov     LIBP2P_CFG_GOSSIPSUB_V12(%rbx), %rax    /* gossipsub v1.2 */
+    RANGE   %rax, 0, 1, 80f
+    mov     LIBP2P_CFG_DONTWANT_SLOTS(%rbx), %rax
+    RANGE   %rax, 0, 4096, 80f
+    test    %rax, %rax
+    jz      11f
+    cmpq    $0, LIBP2P_CFG_DONTWANT_TTL(%rbx)
+    je      80f
 
     /* The protocols part. */
-1:  mov     LIBP2P_CFG_PROTOCOLS_COUNT(%rbx), %r9
+11: mov     LIBP2P_CFG_PROTOCOLS_COUNT(%rbx), %r9
     RANGE   %r9, 0, 64, 80f
     mov     %r9, X26(%rsp)
     test    %r9, %r9
@@ -204,6 +212,11 @@ LOCAL_FUNCTION libp2p_layout
     mov     %rax, (ST_PROTO_COUNT - ST_TABLES)(%rbp)
     imul    $LIBP2P_PROTO_SIZE, %rax, %rax
     add     %rax, %r12
+    mov     %r12, (ST_DW_OFF - ST_TABLES)(%rbp)
+    mov     LIBP2P_CFG_DONTWANT_SLOTS(%rbx), %rax
+    imul    X24(%rsp), %rax
+    imul    $DW_SIZE, %rax, %rax
+    add     %rax, %r12
     add     $63, %r12                       /* the heap, at a multiple of 64 */
     and     $-64, %r12
     mov     LIBP2P_CFG_HEAP_SIZE(%rbx), %rax
@@ -279,7 +292,7 @@ FUNCTION libp2p_init
     movq    $LIBP2P_STATE_VERSION, ST_VERSION(%rbp)
     lea     ST_TABLES(%rbp), %rdi
     lea     32(%rsp), %rsi
-    mov     $(ST_HEAP_SIZE - ST_TABLES + 8), %edx
+    mov     $(ST_DW_OFF - ST_TABLES + 8), %edx
     call    libp2p_copy
     lea     ST_CONFIG(%rbp), %rdi
     mov     %rbx, %rsi

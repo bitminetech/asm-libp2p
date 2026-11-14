@@ -62,7 +62,9 @@ typedef struct {
     uint8_t agent[64];
     uint64_t pv_len;
     uint8_t pv[32];
-} libp2p_config;                                    /* LIBP2P_CFG_FIXED = 640 bytes */
+    uint64_t gossipsub_v12, idontwant_threshold, dontwant_slots, dontwant_ttl, max_idontwant_messages,
+        max_idontwant_length;
+} libp2p_config;                                    /* LIBP2P_CFG_FIXED = 688 bytes */
 
 typedef struct {
     double weight, time_weight;

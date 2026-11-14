@@ -36,6 +36,8 @@
 - [`libp2p_promise_add`](#function-libp2p_promise_add): records an IWANT promise.
 - [`libp2p_promise_keep`](#function-libp2p_promise_keep): marks promises of a message kept.
 - [`libp2p_promise_drop_peer`](#function-libp2p_promise_drop_peer): forgets the promises of a peer.
+- [`libp2p_dw_ring`](#function-libp2p_dw_ring): gives the IDONTWANT ring of a peer.
+- [`libp2p_dontwant`](#function-libp2p_dontwant): tells whether a peer sent IDONTWANT for a message.
 - [`libp2p_gs_alloc`](#function-libp2p_gs_alloc): takes a send chunk.
 - [`libp2p_gs_push`](#function-libp2p_gs_push): queues a chunk on the gossipsub stream of a peer.
 - [`libp2p_pb_head`](#function-libp2p_pb_head): writes the head of a bytes field.
@@ -44,7 +46,8 @@
 - [`libp2p_gs_send_msg`](#function-libp2p_gs_send_msg): sends one message.
 - [`libp2p_gs_send_graft`](#function-libp2p_gs_send_graft): sends GRAFT.
 - [`libp2p_gs_send_prune`](#function-libp2p_gs_send_prune): sends PRUNE.
-- [`libp2p_gs_send_ids`](#function-libp2p_gs_send_ids): sends IHAVE or IWANT.
+- [`libp2p_gs_send_ids`](#function-libp2p_gs_send_ids): sends IHAVE, IWANT or IDONTWANT.
+- [`libp2p_gs_idontwant`](#function-libp2p_gs_idontwant): sends IDONTWANT for a new message.
 - [`libp2p_gs_announce`](#function-libp2p_gs_announce): tells every peer of a subscription change.
 - [`libp2p_gossip_peer_up`](#function-libp2p_gossip_peer_up): opens our gossipsub stream to a peer.
 - [`libp2p_gossip_peer_down`](#function-libp2p_gossip_peer_down): takes a peer out of gossipsub.
@@ -63,6 +66,7 @@
 - [`libp2p_ctl_prune`](#function-libp2p_ctl_prune): handles PRUNE.
 - [`libp2p_ctl_ihave`](#function-libp2p_ctl_ihave): handles IHAVE.
 - [`libp2p_ctl_iwant`](#function-libp2p_ctl_iwant): handles IWANT.
+- [`libp2p_ctl_idontwant`](#function-libp2p_ctl_idontwant): handles IDONTWANT.
 - [`libp2p_mesh_add`](#function-libp2p_mesh_add): adds a peer to a mesh.
 - [`libp2p_mesh_remove`](#function-libp2p_mesh_remove): takes a peer out of a mesh.
 - [`libp2p_candidates`](#function-libp2p_candidates): lists the peers that suit a topic.
@@ -90,6 +94,7 @@
 - [`Topic`](#type-topic): the slot of one topic.
 - [`PeerTopic`](#type-peertopic): the state of a peer in a topic.
 - [`SeenEntry`](#type-seenentry): one message ID of the seen cache.
+- [`DontWantEntry`](#type-dontwantentry): one message ID of IDONTWANT.
 - [`CacheEntry`](#type-cacheentry): one message of the message cache.
 - [`Pending`](#type-pending): a message waiting for the application.
 - [`Promise`](#type-promise): an IWANT promise.
@@ -112,8 +117,9 @@
 
 ## Spec
 
-- Document: [pubsub/README.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/pubsub/README.md), [gossipsub-v1.0.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/pubsub/gossipsub/gossipsub-v1.0.md) and [gossipsub-v1.1.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/pubsub/gossipsub/gossipsub-v1.1.md), libp2p/specs at commit c750236; and [p2p-interface.md](https://github.com/ethereum/consensus-specs/blob/313cbfe561517a81eb11607fea7c6985e562eaa9/specs/phase0/p2p-interface.md), consensus-specs at commit 313cbfe.
-- Section: the RPC, StrictNoSign messages, the mesh, fanout, gossip and the message cache (v1.0); PRUNE backoff, flood publishing, adaptive gossip, outbound mesh quotas, opportunistic grafting and extended validators (v1.1). Peer exchange is not used.
+- Document: [pubsub/README.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/pubsub/README.md), [gossipsub-v1.0.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/pubsub/gossipsub/gossipsub-v1.0.md) and [gossipsub-v1.1.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/pubsub/gossipsub/gossipsub-v1.1.md) and [gossipsub-v1.2.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/pubsub/gossipsub/gossipsub-v1.2.md), libp2p/specs at commit c750236; and [p2p-interface.md](https://github.com/ethereum/consensus-specs/blob/313cbfe561517a81eb11607fea7c6985e562eaa9/specs/phase0/p2p-interface.md), consensus-specs at commit 313cbfe.
+- Section: the RPC, StrictNoSign messages, the mesh, fanout, gossip and the message cache (v1.0); PRUNE backoff, flood publishing, adaptive gossip, outbound mesh quotas, opportunistic grafting and extended validators (v1.1); IDONTWANT (v1.2). Peer exchange is not used.
+- The consensus specs name gossipsub v1.1 ("/meshsub/1.1.0"); v1.2 adds "/meshsub/1.2.0", and its IDONTWANT is optional for both sides.
 
 ## Function `libp2p_peer_at`
 
@@ -1221,6 +1227,79 @@ libp2p_promise_drop_peer(peer)
 - Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
 - Argument order: `peer`.
 
+## Function `libp2p_dw_ring`
+
+Gives the first entry of a peer's IDONTWANT ring.
+
+### Signature
+
+```
+libp2p_dw_ring(peer) -> entry
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `peer` | input | u64: a peer slot index |
+
+### Function does
+
+- Gives the [`DontWantEntry`](#type-dontwantentry) at peer x `dontwant_slots`.
+
+### Function never
+
+- Makes an OS call.
+
+### Limits
+
+- Stack of its own: 8 bytes on x86-64 (return address included), 0 bytes on ARM64, 0 bytes on RISC-V.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_dw_ring`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6). It returns the entry, not a status.
+- Argument order: `peer`.
+
+## Function `libp2p_dontwant`
+
+Tells whether a peer sent IDONTWANT for a message ID.
+
+### Signature
+
+```
+libp2p_dontwant(peer, id, n) -> 1 or 0
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `peer` | input | u64: a peer slot index |
+| `id` | input | n bytes |
+| `n` | input | u64 |
+
+### Function does
+
+- Gives 1 when the peer's ring holds the ID from fewer than `dontwant_ttl` heartbeats ago, else 0.
+- Gives 0 when `dontwant_slots` is 0.
+
+### Function never
+
+- Makes an OS call.
+
+### Limits
+
+- Stack of its own: 96 bytes on x86-64 (return address included), 96 bytes on ARM64, 112 bytes on RISC-V.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_dontwant`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V). It returns 1 or 0, not a status.
+- Argument order: `peer`, `id`, `n`.
+
 ## Function `libp2p_gs_alloc`
 
 Takes a send chunk for n bytes.
@@ -1521,7 +1600,7 @@ libp2p_gs_send_prune(peer, topic, backoff)
 
 ## Function `libp2p_gs_send_ids`
 
-Sends control with one IHAVE or one IWANT.
+Sends control with one IHAVE, one IWANT or one IDONTWANT.
 
 ### Signature
 
@@ -1534,15 +1613,15 @@ libp2p_gs_send_ids(peer, topic, list, count, kind)
 | Name | Role | Type |
 |---|---|---|
 | `peer` | input | [`Peer`](connections.md#type-peer) slot |
-| `topic` | input | [`Topic`](gossipsub.md#type-topic) slot |
+| `topic` | input | [`Topic`](gossipsub.md#type-topic) slot for IHAVE; unused else |
 | `list` | input | `count` pairs: the address of an ID, then its length |
 | `count` | input | u64 |
-| `kind` | input | u64: 1 IHAVE, 2 IWANT |
+| `kind` | input | u64: the field of the ControlMessage: 1 IHAVE, 2 IWANT, 5 IDONTWANT |
 
 ### Function does
 
 - IHAVE: topicID (field 1), then each ID as messageIDs (field 2).
-- IWANT: each ID as messageIDs (field 1).
+- IWANT and IDONTWANT: each ID as messageIDs (field 1).
 
 ### Function never
 
@@ -1558,6 +1637,41 @@ libp2p_gs_send_ids(peer, topic, list, count, kind)
 - Symbol: `libp2p_gs_send_ids`, local to its object.
 - Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
 - Argument order: `peer`, `topic`, `list`, `count`, `kind`.
+
+## Function `libp2p_gs_idontwant`
+
+Sends IDONTWANT for a new message to the mesh of its topic.
+
+### Signature
+
+```
+libp2p_gs_idontwant(pending)
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `pending` | input | [`Pending`](#type-pending) slot |
+
+### Function does
+
+- For a message of `idontwant_threshold` bytes or more, with `idontwant_threshold` above 0: sends IDONTWANT with its ID, at once, to each mesh peer of the topic that speaks "/meshsub/1.2.0", except the peer that sent it.
+
+### Function never
+
+- Makes an OS call.
+
+### Limits
+
+- Stack of its own: 96 bytes on x86-64 (return address included), 96 bytes on ARM64, 112 bytes on RISC-V.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_gs_idontwant`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
+- Argument order: `pending`.
 
 ## Function `libp2p_gs_announce`
 
@@ -1613,7 +1727,8 @@ libp2p_gossip_peer_up(peer)
 
 ### Function does
 
-- Opens a "/meshsub/1.1.0" stream on the first connection of the peer.
+- Empties the IDONTWANT ring of the peer and its IDONTWANT counter.
+- Opens a gossipsub stream on the first connection of the peer: it proposes "/meshsub/1.2.0", then "/meshsub/1.1.0", when `gossipsub_v12` is on; else "/meshsub/1.1.0".
 
 ### Function never
 
@@ -1689,7 +1804,7 @@ libp2p_gossip_out_ready(stream)
 
 ### Function does
 
-- Marks the peer ready for gossipsub.
+- Marks the peer ready for gossipsub, and for IDONTWANT when the stream speaks "/meshsub/1.2.0".
 - Sends one SubOpts for each topic we subscribe to.
 
 ### Function never
@@ -1995,7 +2110,7 @@ libp2p_rpc_control(peer, p, n)
 
 ### Function does
 
-- Handles ihave (1), iwant (2), graft (3) and prune (4) in their order; stops at a field that is not well formed.
+- Handles ihave (1), iwant (2), graft (3), prune (4) and idontwant (5) in their order; stops at a field that is not well formed.
 
 ### Function never
 
@@ -2225,7 +2340,7 @@ libp2p_ctl_iwant(peer, p, n)
 ### Function does
 
 - Heard only from a peer at or above `gossip_threshold`.
-- Sends each message still in the cache, while `libp2p_mc_sent` allows it.
+- Sends each message still in the cache, while `libp2p_mc_sent` allows it, unless the peer sent IDONTWANT for it.
 
 ### Function never
 
@@ -2239,6 +2354,48 @@ libp2p_ctl_iwant(peer, p, n)
 
 - Role: L0.
 - Symbol: `libp2p_ctl_iwant`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
+- Argument order: `peer`, `p`, `n`.
+
+## Function `libp2p_ctl_idontwant`
+
+Handles an IDONTWANT of a peer.
+
+### Signature
+
+```
+libp2p_ctl_idontwant(peer, p, n)
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `peer` | input | u64: a peer slot index |
+| `p` | input | n bytes: ControlIDontWant |
+| `n` | input | u64 |
+
+### Function does
+
+- Not heard when `dontwant_slots` is 0, or after `max_idontwant_messages` IDONTWANT messages of the peer in this heartbeat.
+- Puts up to `max_idontwant_length` message IDs of 1 to `LIBP2P_MAX_MSG_ID` bytes in the peer's ring, each with the heartbeat number, over the oldest entry.
+
+### Function never
+
+- Makes an OS call.
+
+### Effects
+
+- The peer does not get these messages from us for `dontwant_ttl` heartbeats.
+
+### Limits
+
+- Stack of its own: 96 bytes on x86-64 (return address included), 96 bytes on ARM64, 112 bytes on RISC-V.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_ctl_idontwant`, local to its object.
 - Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V).
 - Argument order: `peer`, `p`, `n`.
 
@@ -2513,6 +2670,7 @@ libp2p_on_publish(event)
 - Marks the ID seen and valid, and caches the message.
 - With `flood_publish`: sends it to every subscribed peer at or above `publish_threshold`.
 - Else to the mesh of a topic we subscribe to; or to the fanout, which it first fills up to `d` at random with peers at or above `publish_threshold`.
+- Skips a peer that sent IDONTWANT for the ID.
 - Gives PUBLISHED with the number of peers it went to.
 
 ### Function never
@@ -2550,7 +2708,7 @@ libp2p_on_message_id(event)
 
 - Ends the promises of the ID.
 - Seen before: scores the delivery with `libp2p_score_duplicate`, gives MESSAGE_STATUS duplicate, and frees the slot.
-- Else marks the ID seen and pending, and gives MESSAGE_STATUS new: the application judges it with VALIDATION.
+- Else marks the ID seen and pending, sends IDONTWANT with `libp2p_gs_idontwant`, and gives MESSAGE_STATUS new: the application judges it with VALIDATION.
 - Ignores a stale handle or a message that has its ID already.
 
 ### Function never
@@ -2586,7 +2744,7 @@ libp2p_on_validation(event)
 
 ### Function does
 
-- ACCEPT: marks the ID valid, scores the deliveries, caches the message, and sends it to the mesh of the topic but not to the peers that sent it.
+- ACCEPT: marks the ID valid, scores the deliveries, caches the message, and sends it to the mesh of the topic but not to the peers that sent it or sent IDONTWANT for it.
 - REJECT: marks the ID invalid and counts an invalid message for each peer that sent it.
 - IGNORE: marks the ID ignored.
 - Then frees the slot; ignores a stale handle or a message still waiting for its ID.
@@ -2687,7 +2845,7 @@ libp2p_heartbeat()
 ### Function does
 
 - Scores every connected peer for this heartbeat.
-- Resets the IHAVE counters.
+- Resets the IHAVE and IDONTWANT counters.
 - Gives a behaviour penalty for each promise past its deadline.
 - Maintains the mesh of each topic we subscribe to, and the fanout of each other topic with one, then gossips with `libp2p_emit_gossip`.
 - Moves the message cache to a new window, and drops old seen entries.
@@ -3066,6 +3224,24 @@ A message ID the node has seen, and its verdict.
 - The seen cache is a ring of `seen_capacity` entries with a hash index; the oldest goes first.
 
 
+## Type `DontWantEntry`
+
+A message ID a peer sent in IDONTWANT.
+
+### Layout
+
+| Offset | Field | Type | Meaning |
+|---|---|---|---|
+| 0 | `hb` | u64 | The heartbeat number when it came |
+| 8 | `id_len` | u64 | Bytes of the ID; 0: empty |
+| 16 | `id` | 32 bytes | The ID |
+
+### Rules
+
+- Each peer has a ring of `dontwant_slots` entries; a new ID goes over the oldest.
+- An entry counts for `dontwant_ttl` heartbeats.
+
+
 ## Type `CacheEntry`
 
 A message kept for IWANT and gossip.
@@ -3301,650 +3477,11 @@ A peer joined or left a topic.
 
 ## Test vectors
 
-- Scenarios of [tests/runner/runner.c](../../tests/runner/runner.c): gossip (8 nodes), gossip_lazy, scoring, secondary.
+- Scenarios of [tests/runner/runner.c](../../tests/runner/runner.c): gossip (6 nodes), gossip_lazy, scoring, secondary, idontwant (fewer duplicates with IDONTWANT, and a node of v1.1 only).
+- gossipsub-interop of libp2p/test-plans ([tests/gossipsub/](../../tests/gossipsub/)): networks shared with go, rust, jvm and nim.
 - The shell loop test ([tests/shell/loop.c](../../tests/shell/loop.c)): one message between two nodes on every OS.
 - The live test on Ethereum mainnet ([tests/mainnet/](../../tests/mainnet/)): beacon blocks and attestations from peers of every client.
 
 ## Results
 
 <!-- CI generates the tick table for each function here. -->
-
-### `libp2p_peer_at`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_peer_idx`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_topic_at`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_topic_idx`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_pt`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_topic_find`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_topic_get`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_topic_tidy`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_ready`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_idx_find`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_idx_add`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_idx_del`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_seen_args`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_seen_find`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_seen_drop_tail`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_seen_tail`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_seen_add`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_seen_args_keep`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_seen_expire`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mc_args`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mc_find`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mc_tail`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mc_drop_tail`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mc_put`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mc_shift`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mc_sent`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_pend`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_pend_free`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_pend_status`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_promise_add`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_promise_keep`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_promise_drop_peer`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_alloc`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_push`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_pb_head`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_rpc`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_send_sub`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_send_msg`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_send_graft`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_send_prune`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_send_ids`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gs_announce`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gossip_peer_up`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gossip_peer_down`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gossip_out_ready`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gossip_in_ready`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gossip_rx`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_rpc_handle`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_field_bytes`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_peer_topic`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_rpc_sub`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_rpc_msg`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_rpc_control`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_backoff_secs`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_prune_to`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_ctl_graft`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_ctl_prune`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_ctl_ihave`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_ctl_iwant`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mesh_add`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mesh_remove`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_candidates`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_shuffle`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_on_subscribe`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_fanout_clear_topic`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_on_unsubscribe`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_on_publish`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_on_message_id`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_on_validation`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_seen_delivered`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_gossip_timers`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_heartbeat`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_list_score`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_list_outbound`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_sort_score`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_add_from_list`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_mesh_maintain`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_keep_outbound`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_fanout_maintain`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_emit_gossip`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |

@@ -173,7 +173,7 @@ LOCAL_FUNCTION libp2p_stream_free
     bne     t4, s3, 7f
     sd      t2, P_GS_OUT(t3)
     ld      t4, P_FLAGS(t3)
-    andi    t4, t4, ~(PF_GOSSIP | PF_HELLO)
+    andi    t4, t4, ~(PF_GOSSIP | PF_HELLO | PF_IDONTWANT)
     sd      t4, P_FLAGS(t3)
 7:  ld      t4, P_GS_IN(t3)
     bne     t4, s3, 8f
@@ -360,13 +360,31 @@ LOCAL_FUNCTION libp2p_stream_open
 9:  LEAVE   0
 END_FUNCTION libp2p_stream_open
 
+/*
+ * libp2p_gs_proposal(stream) -> the multistream message of the gossipsub
+ * proposal at S_PROP_INDEX: /meshsub/1.2.0 first when gossipsub_v12 is on,
+ * then /meshsub/1.1.0. Each is 15 bytes. A leaf.
+ */
+LOCAL_FUNCTION libp2p_gs_proposal
+    UNWIND_END_PROLOGUE
+    ld      t0, S_PROP_INDEX(a0)
+    CFG     t1, LIBP2P_CFG_GOSSIPSUB_V12
+    lla     a0, 435b
+    bnez    t0, 1f
+    beqz    t1, 1f
+    lla     a0, 437b
+1:  ret
+END_FUNCTION libp2p_gs_proposal
+
 /* libp2p_stream_propose(stream) -> 1 when the proposal at S_PROP_INDEX is queued. */
 LOCAL_FUNCTION libp2p_stream_propose
     ENTER   0
     mv      s1, a0
     ld      t0, S_PROPOSALS(s1)
     bnez    t0, 1f
-    lla     a1, 435b                        # gossipsub
+    call    libp2p_gs_proposal              # gossipsub
+    mv      a1, a0
+    mv      a0, s1
     li      a2, 15
     call    libp2p_stream_ms_out
     j       9f
@@ -387,8 +405,9 @@ LOCAL_FUNCTION libp2p_stream_is_proposal
     mv      s1, a0
     ld      t0, S_PROPOSALS(s1)
     bnez    t0, 1f
+    call    libp2p_gs_proposal
+    mv      a1, a0
     addi    a0, s1, S_MS_STATE
-    lla     a1, 435b
     li      a2, 15
     call    libp2p_ms_is
     j       9f
@@ -647,9 +666,18 @@ LOCAL_FUNCTION libp2p_stream_ms
     lla     a1, 435b
     li      a2, 15
     call    libp2p_ms_is
+    lla     s3, 435b
+    bnez    a0, 41f
+    CFG     t0, LIBP2P_CFG_GOSSIPSUB_V12
+    beqz    t0, 50f
+    addi    a0, s1, S_MS_STATE
+    lla     a1, 437b
+    li      a2, 15
+    call    libp2p_ms_is
+    lla     s3, 437b
     beqz    a0, 50f
-    mv      a0, s1
-    lla     a1, 435b
+41: mv      a0, s1                          # gossipsub: echo the version
+    mv      a1, s3
     li      a2, 15
     call    libp2p_stream_ms_out
     sd      zero, S_MS_LEN(s1)
@@ -943,9 +971,9 @@ END_FUNCTION libp2p_observed
 /*
  * libp2p_identify(stream): the Identify message on a stream the peer opened
  * with /ipfs/id/1.0.0, varint-length prefixed, then FIN: publicKey (1),
- * observedAddr (4), protocols (3): identify, gossipsub and the application
- * protocols, then protocolVersion (5) and agentVersion (6) when the config
- * has them.
+ * observedAddr (4), protocols (3): identify, gossipsub (/meshsub/1.2.0 too
+ * when gossipsub_v12 is on) and the application protocols, then
+ * protocolVersion (5) and agentVersion (6) when the config has them.
  * s1 stream, s2 size, s3 key length, s4 observed length, s6 chunk,
  * s7 protocol, s8 protocols left. Key at sp + FL, observed at sp + FL + 48.
  */
@@ -976,6 +1004,9 @@ LOCAL_FUNCTION libp2p_identify
     li      a0, 3
     li      a1, 14
     call    libp2p_pb_size
+    CFG     t0, LIBP2P_CFG_GOSSIPSUB_V12    # and /meshsub/1.2.0
+    mul     t0, a0, t0
+    add     s2, s2, t0
     slli    a0, a0, 1                       # identify and gossipsub: 14 bytes each
     add     s2, s2, a0
     TABLE   s7, ST_PROTO_OFF
@@ -1018,7 +1049,13 @@ LOCAL_FUNCTION libp2p_identify
     lla     a2, 436b
     li      a3, 14
     call    libp2p_pb_bytes
+    CFG     t0, LIBP2P_CFG_GOSSIPSUB_V12
+    beqz    t0, 41f
     li      a1, 3
+    lla     a2, 437b
+    li      a3, 14
+    call    libp2p_pb_bytes
+41: li      a1, 3
     lla     a2, 435b
     li      a3, 14
     call    libp2p_pb_bytes

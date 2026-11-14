@@ -88,7 +88,7 @@ LOCAL_FUNCTION libp2p_gossip_timers
 END_FUNCTION libp2p_gossip_timers
 
 /*
- * libp2p_heartbeat(): scores of this heartbeat; IHAVE counters reset; broken
+ * libp2p_heartbeat(): scores of this heartbeat; IHAVE and IDONTWANT counters reset; broken
  * promises cost a behaviour penalty; mesh maintenance of each topic we
  * subscribe to, fanout maintenance of the others; gossip; then the message
  * cache moves to a new window and old seen entries leave.
@@ -98,11 +98,12 @@ LOCAL_FUNCTION libp2p_heartbeat
     ENTER   0
     ldr     x22, [x28, #SC_NOW]
     bl      libp2p_score_all
-    TABLE   x19, ST_PEER_OFF                /* IHAVE counters */
+    TABLE   x19, ST_PEER_OFF                /* IHAVE and IDONTWANT counters */
     ldr     x20, [x27, #ST_PEER_COUNT]
 1:  cbz     x20, 2f
     str     xzr, [x19, #P_IHAVE_COUNT]
     str     xzr, [x19, #P_IHAVE_IDS]
+    str     xzr, [x19, #P_DW_COUNT]
     add     x19, x19, #P_SIZE
     sub     x20, x20, #1
     b       1b

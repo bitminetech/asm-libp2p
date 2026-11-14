@@ -16,6 +16,7 @@
 - [`libp2p_stream_ms_out`](#function-libp2p_stream_ms_out): queues a multistream message on a stream.
 - [`libp2p_stream_ms_proto`](#function-libp2p_stream_ms_proto): queues the message of a protocol ID on a stream.
 - [`libp2p_stream_open`](#function-libp2p_stream_open): opens an outbound stream.
+- [`libp2p_gs_proposal`](#function-libp2p_gs_proposal): gives the gossipsub proposal of a stream.
 - [`libp2p_stream_propose`](#function-libp2p_stream_propose): queues the current proposal of a stream.
 - [`libp2p_stream_is_proposal`](#function-libp2p_stream_is_proposal): tells whether the answer is the proposal.
 - [`libp2p_stream_find_proto`](#function-libp2p_stream_find_proto): finds the application protocol a message names.
@@ -487,7 +488,7 @@ libp2p_stream_open(conn, target, tag, proposals, count) -> stream
 ### Function does
 
 - Takes the next stream ID of this side: yamux steps by 2, mplex by 1.
-- Marks the stream to send SYN (yamux) or NewStream (mplex), and queues the multistream header and the first proposal: "/meshsub/1.1.0" for gossipsub.
+- Marks the stream to send SYN (yamux) or NewStream (mplex), and queues the multistream header and the first proposal, from `libp2p_gs_proposal` for gossipsub.
 - Gives 0 when it cannot: no slot, or no heap for the bytes; the stream and the proposals are then freed.
 
 ### Function never
@@ -509,6 +510,42 @@ libp2p_stream_open(conn, target, tag, proposals, count) -> stream
 - Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V). It returns the slot or 0, not a status.
 - Argument order: `conn`, `target`, `tag`, `proposals`, `count`.
 
+## Function `libp2p_gs_proposal`
+
+Gives the gossipsub protocol an outbound stream proposes now.
+
+### Signature
+
+```
+libp2p_gs_proposal(stream) -> message
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `stream` | input | [`Stream`](streams.md#type-stream) slot |
+
+### Function does
+
+- Gives "/meshsub/1.2.0" at proposal index 0 when `gossipsub_v12` is on; else "/meshsub/1.1.0".
+- Each message is 15 bytes, the newline included.
+
+### Function never
+
+- Makes an OS call.
+
+### Limits
+
+- Stack of its own: 8 bytes on x86-64 (return address included), 0 bytes on ARM64, 0 bytes on RISC-V.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_gs_proposal`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6). It returns the address of the message, not a status.
+- Argument order: `stream`.
+
 ## Function `libp2p_stream_propose`
 
 Queues the current proposal of an outbound stream.
@@ -527,7 +564,7 @@ libp2p_stream_propose(stream) -> 1 or 0
 
 ### Function does
 
-- Queues the proposal at the proposal index, or "/meshsub/1.1.0" for gossipsub.
+- Queues the proposal at the proposal index, or the one of `libp2p_gs_proposal` for gossipsub.
 - Gives 1 when it is queued, else 0.
 
 ### Function never
@@ -753,7 +790,7 @@ libp2p_stream_ms(stream)
 
 - Takes the header first; a stream the peer opened answers it with ours.
 - Our stream: the echo of the proposal selects it: STREAM_OPENED for an application stream, or gossipsub starts; "na" moves to the next proposal, and after the last the stream is reset with PROTOCOL.
-- A stream the peer opened: "/meshsub/1.1.0" is selected for gossipsub; "/ipfs/id/1.0.0" gets the Identify message; a protocol of the config is echoed and gives STREAM_INBOUND; anything else gets "na".
+- A stream the peer opened: "/meshsub/1.1.0", or "/meshsub/1.2.0" when `gossipsub_v12` is on, is selected for gossipsub; "/ipfs/id/1.0.0" gets the Identify message; a protocol of the config is echoed and gives STREAM_INBOUND; anything else gets "na".
 - Resets the stream with PROTOCOL when the header is wrong or the answer is neither the proposal nor "na".
 
 ### Function never
@@ -1250,211 +1287,3 @@ A stream ended abnormally.
 ## Results
 
 <!-- CI generates the tick table for each function here. -->
-
-### `libp2p_stream_index`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_at`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_conn`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_handle`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_new`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_free`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_kill`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_failed`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_queue`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_ms_out`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_ms_proto`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_open`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_propose`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_is_proposal`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_find_proto`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_data`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_abort`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_reset`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_ms`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_remote_fin`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_on_open_stream`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_app_stream`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_on_stream_write`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_on_stream_close`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_on_stream_reset`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |
-
-### `libp2p_stream_append`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 | ✅ | ✅ | ✅ |  |
-| ARM64 | ✅ | ✅ | ✅ |  |
-| RISC-V | ✅ |  |  |  |

@@ -31,11 +31,12 @@ tests/gossipsub/run.sh /path/to/work
 
 - The host name gives the node ID: `node<ID>`.
 - The identity is Ed25519, with the node ID as 8 bytes little endian, then zeros, as the seed.
-- It listens on TCP port 9000, offers yamux, then mplex, and speaks `/meshsub/1.1.0`.
+- It listens on TCP port 9000, offers yamux, then mplex, and speaks `/meshsub/1.2.0`, or `/meshsub/1.1.0` with a peer of v1.1.
 - A message ID is the first 8 bytes of the data; the log gives it as a big endian u64 in base 10.
 - It logs "Received Message" for every message that arrives, duplicates included.
 - A gossipsub parameter that the script leaves out takes the default of go-libp2p-pubsub `a01777894f4c`, the version of the go node.
-- HeartbeatInitialDelay, PrunePeers, the connection parameters, SlowHeartbeatWarning and the IDONTWANT parameters have no field in the config.
+- IDontWantMessageThreshold, IDontWantMessageTTL, MaxIDontWantMessages and MaxIDontWantLength set the IDONTWANT fields of the config; the node keeps 256 IDs of IDONTWANT for each peer.
+- HeartbeatInitialDelay, PrunePeers, the connection parameters and SlowHeartbeatWarning have no field in the config.
 - A failed dial or name lookup is tried again after 1 second, up to 10 times.
 - Partial messages stop the node with an error, so the `partial-messages` scenarios do not run.
 - It exits 0 after the last instruction, as the go node does.

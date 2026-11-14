@@ -732,6 +732,55 @@ LOCAL_FUNCTION libp2p_promise_drop_peer
 9:  ret
 END_FUNCTION libp2p_promise_drop_peer
 
+/* ---------------------------------------------------------------- IDONTWANT */
+
+/* libp2p_dw_ring(peer index) -> the first entry of the peer's IDONTWANT ring. A leaf. */
+LOCAL_FUNCTION libp2p_dw_ring
+    UNWIND_END_PROLOGUE
+    CFG     t0, LIBP2P_CFG_DONTWANT_SLOTS
+    li      t1, DW_SIZE
+    mul     t0, t0, t1
+    mul     t0, t0, a0
+    ld      t1, ST_DW_OFF(s9)
+    add     t0, t0, t1
+    add     a0, s9, t0
+    ret
+END_FUNCTION libp2p_dw_ring
+
+/*
+ * libp2p_dontwant(peer index, id, n) -> 1 when the peer sent IDONTWANT for
+ * the message ID within the last dontwant_ttl heartbeats, else 0.
+ * s1 id, s2 n, s3 entry, s4 entries left, s5 heartbeat number.
+ */
+LOCAL_FUNCTION libp2p_dontwant
+    ENTER   0
+    mv      s1, a1
+    mv      s2, a2
+    CFG     s4, LIBP2P_CFG_DONTWANT_SLOTS
+    beqz    s4, 8f
+    call    libp2p_dw_ring
+    mv      s3, a0
+    ld      s5, ST_HEARTBEATS(s9)
+1:  ld      t0, DW_ID_LEN(s3)
+    bne     t0, s2, 2f
+    ld      t1, DW_HB(s3)
+    sub     t1, s5, t1
+    CFG     t2, LIBP2P_CFG_DONTWANT_TTL
+    bgeu    t1, t2, 2f
+    addi    a0, s3, DW_ID
+    mv      a1, s1
+    mv      a2, s2
+    call    libp2p_equal
+    bnez    a0, 7f
+2:  addi    s3, s3, DW_SIZE
+    addi    s4, s4, -1
+    bnez    s4, 1b
+8:  li      a0, 0
+    j       9f
+7:  li      a0, 1
+9:  LEAVE   0
+END_FUNCTION libp2p_dontwant
+
 /* ---------------------------------------------------------------- RPCs out */
 
 /*
@@ -976,9 +1025,10 @@ END_FUNCTION libp2p_gs_send_prune
 
 /*
  * libp2p_gs_send_ids(peer, topic, list, count, kind): control with one IHAVE
- * (kind 1: topicID, then messageIDs as field 2) or one IWANT (kind 2:
- * messageIDs as field 1). list holds count pairs: the address of an ID,
- * then its length.
+ * (kind 1: topicID, then messageIDs as field 2), one IWANT (kind 2) or one
+ * IDONTWANT (kind 5): messageIDs as field 1, no topic. The kind is the
+ * field of the ControlMessage. list holds count pairs: the address of an
+ * ID, then its length.
  * s1 peer, s2 topic, s3 list, s4 count, s5 kind, s6 inner size, s7 index,
  * s8 chunk.
  */
@@ -1045,6 +1095,53 @@ LOCAL_FUNCTION libp2p_gs_send_ids
     call    libp2p_gs_push
 9:  LEAVE   0
 END_FUNCTION libp2p_gs_send_ids
+
+/*
+ * libp2p_gs_idontwant(pending): a new message of idontwant_threshold bytes
+ * or more: IDONTWANT with its ID, at once, to each mesh peer of its topic
+ * that speaks /meshsub/1.2.0, except the peer that sent it.
+ * s1 pending, s2 list, s3 count, s4 i.
+ */
+LOCAL_FUNCTION libp2p_gs_idontwant
+    ENTER   0
+    mv      s1, a0
+    CFG     t0, LIBP2P_CFG_IDONTWANT_THRESHOLD
+    beqz    t0, 9f
+    ld      t1, PD_DATA_LEN(s1)
+    bltu    t1, t0, 9f
+    SCR     t0, SC_IDS                      # the one ID
+    addi    t1, s1, PD_ID
+    sd      t1, 0(t0)
+    ld      t1, PD_ID_LEN(s1)
+    sd      t1, 8(t0)
+    li      t0, 0xFFF0000000000000          # the mesh, at any score: -infinity
+    fmv.d.x fa0, t0
+    ld      a0, PD_TOPIC(s1)
+    li      a1, PTF_MESH
+    li      a2, 0
+    call    libp2p_candidates
+    mv      s3, a0
+    SCR     s2, SC_LIST
+    li      s4, 0
+1:  bgeu    s4, s3, 9f
+    slli    t0, s4, 2
+    add     t0, s2, t0
+    lwu     a0, 0(t0)
+    ld      t1, PD_PEER(s1)
+    beq     a0, t1, 2f
+    call    libp2p_peer_at
+    ld      t0, P_FLAGS(a0)
+    andi    t0, t0, PF_IDONTWANT
+    beqz    t0, 2f
+    li      a1, 0
+    SCR     a2, SC_IDS
+    li      a3, 1
+    li      a4, 5
+    call    libp2p_gs_send_ids
+2:  addi    s4, s4, 1
+    j       1b
+9:  LEAVE   0
+END_FUNCTION libp2p_gs_idontwant
 
 /* libp2p_gs_announce(topic, subscribe): our subscription change, to every gossipsub peer. */
 LOCAL_FUNCTION libp2p_gs_announce

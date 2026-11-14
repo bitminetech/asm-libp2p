@@ -43,7 +43,7 @@
 .set LIBP2P_RX_SIZE, 65552              /* the receive buffer of a connection: one Noise message */
 .set LIBP2P_ACTIONS_MIN, 1056768        /* action room libp2p_step needs: 4096 + 64 + 16 x 65536, rounded up */
 .set LIBP2P_SCRATCH_SIZE, 594536       /* bytes of the scratch of libp2p_step */
-.set LIBP2P_STATE_VERSION, 1
+.set LIBP2P_STATE_VERSION, 2
 
 /* ---------------------------------------------------------------- Address */
 
@@ -126,7 +126,14 @@
 .set LIBP2P_CFG_AGENT, 536              /* 64 bytes */
 .set LIBP2P_CFG_PV_LEN, 600             /* protocolVersion: length, then bytes */
 .set LIBP2P_CFG_PV, 608                 /* 32 bytes */
-.set LIBP2P_CFG_FIXED, 640
+/* gossipsub v1.2 */
+.set LIBP2P_CFG_GOSSIPSUB_V12, 640      /* 1: /meshsub/1.2.0 is proposed first and accepted; 0: /meshsub/1.1.0 only */
+.set LIBP2P_CFG_IDONTWANT_THRESHOLD, 648 /* data bytes from which a new message gets IDONTWANT; 0: none is sent */
+.set LIBP2P_CFG_DONTWANT_SLOTS, 656     /* message IDs of IDONTWANT kept for each peer; 0: IDONTWANT is not heard */
+.set LIBP2P_CFG_DONTWANT_TTL, 664       /* heartbeats an ID of IDONTWANT is kept */
+.set LIBP2P_CFG_MAX_IDONTWANT_MESSAGES, 672 /* IDONTWANT messages heard from a peer per heartbeat */
+.set LIBP2P_CFG_MAX_IDONTWANT_LENGTH, 680   /* message IDs taken from one IDONTWANT */
+.set LIBP2P_CFG_FIXED, 688
 
 /* ProtocolEntry: a protocol ID the node accepts on inbound streams. */
 .set LIBP2P_PROTO_LEN, 0
