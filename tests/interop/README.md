@@ -19,7 +19,7 @@ tests/interop/run.sh arm64
 | `node.c` | The asm-libp2p node of the test. Test code in C: it does Redis and the ping protocol; the library does the rest. |
 | `Dockerfile` | The image of the node, `asm-libp2p-interop-<ISA>`, from `build/linux-<ISA>/node`. For RISC-V, the node runs under QEMU user mode. |
 | `build-images.sh` | `build-images.sh ISA WORK_DIR [IMAGE ...]`: builds the image of the node, checks out test-plans in WORK_DIR, and builds the images of the other implementations. |
-| `run.sh` | `run.sh ISA [IMAGE ...]`: runs each pair with Docker Compose and a Redis container, and prints PASS or FAIL for each. A pair passes when the dialer prints its handshake and ping times. |
+| `run.sh` | `run.sh ISA [IMAGE ...]`: runs each pair with Docker Compose and a Redis container, and prints PASS with the two times of the dialer, or FAIL. A pair passes when the dialer prints its times. `RUNS=n` runs each pair n times; `BASELINE=1` also runs each implementation, and asm-libp2p, against itself. |
 
 [.github/workflows/ci.yml](../../.github/workflows/ci.yml) runs the Linux x86-64 node against go-v0.48 and rust-v0.56, both ways.
 
