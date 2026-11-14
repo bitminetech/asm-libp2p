@@ -55,3 +55,22 @@ tests/gossipsub/run.sh /path/to/work
 | `run.py` | `build.sh` removes `make binaries`, which builds all 4 implementations before each run |
 | go node | Built with cgo instead of `-linkshared`: Shadow needs a dynamically linked binary |
 | asm-libp2p node | Linked dynamically against libc for the same reason; the library makes its system calls directly, and Shadow traps those with seccomp |
+
+## Results
+
+Run on 2026-11-14 in CI, 32 nodes per composition, seed 1. Each time is the mean over the 12 checked messages.
+
+| Composition | Reach | Time to every node | Time to half | Duplicates per node |
+|---|---|---|---|---|
+| asm | 100% | 0.590 s | 0.286 s | 6.72 |
+| go | 100% | 0.260 s | 0.107 s | 3.87 |
+| asm+go | 100% | 0.320 s | 0.151 s | 6.54 |
+| asm+rust | 100% | 0.310 s | 0.138 s | 6.21 |
+| asm+jvm | 100% | 0.306 s | 0.121 s | 7.34 |
+| asm+nim | 100% | 0.274 s | 0.110 s | 6.59 |
+| asm+go+rust+jvm+nim | 100% | 0.268 s | 0.111 s | 5.72 |
+
+- Every composition passes: every checked message reaches every node.
+- A network of asm-libp2p alone is slower, and has more duplicates, than a network of go-libp2p alone.
+- The go nodes speak gossipsub v1.2 and send IDONTWANT: 3212 "Sent Idontwant" log lines in the network of go alone, 789 in asm+go, where only links between two go nodes carry it. asm-libp2p speaks gossipsub v1.1, which has no IDONTWANT.
+- In asm+go, an asm-libp2p node receives 8.08 duplicates per message, and a go node 5.01.
