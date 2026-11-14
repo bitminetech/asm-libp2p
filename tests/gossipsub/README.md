@@ -72,6 +72,6 @@ Run on 2026-11-14 in CI, 32 nodes per composition, seed 1, with gossipsub v1.2 (
 | asm+go+rust+jvm+nim | 100% | 0.264 s | 0.110 s | 4.91 |
 
 - Every composition passes: every checked message reaches every node.
-- A network of asm-libp2p alone is as fast as a network of go-libp2p alone.
+- A network of asm-libp2p alone reaches half its nodes as fast as a network of go-libp2p alone, and every node 0.034 s later, with 0.65 more duplicates per node.
 - With gossipsub v1.1 only (commit 1fef64a), a network of asm-libp2p alone took 0.590 s to every node and 0.286 s to half, with 6.72 duplicates per node.
 - Shadow warns on GitHub's runners that it cannot emulate cpuid, which may break determinism: runs of the same commit can differ a little.
