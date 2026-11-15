@@ -1348,6 +1348,14 @@ The outcome of `libp2p_shell_bind`.
 | ARM64 | ✅ | ✅ | ✅ |  |
 | RISC-V | ✅ |  |  |  |
 
+### `libp2p_shell_bind`
+
+| ISA | Linux | Windows | macOS | `equal` |
+|---|---|---|---|---|
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
+| RISC-V | ✅ |  |  |  |
+
 ### `libp2p_shell_perform`
 
 | ISA | Linux | Windows | macOS | `equal` |
@@ -1556,34 +1564,26 @@ The outcome of `libp2p_shell_bind`.
 | ARM64 |  | ✅ |  |  |
 | RISC-V |  |  |  |  |
 
-### `libp2p_shell_bind`
-
-| ISA | Linux | Windows | macOS | `equal` |
-|---|---|---|---|---|
-| x86-64 |  |  |  |  |
-| ARM64 |  |  |  |  |
-| RISC-V |  |  |  |  |
-
 ### `libp2p_shell_udp_read`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 |  |  |  |  |
-| ARM64 |  |  |  |  |
-| RISC-V |  |  |  |  |
+| x86-64 | ✅ | ✅ | ✅ |  |
+| ARM64 | ✅ | ✅ | ✅ |  |
+| RISC-V | ✅ |  |  |  |
 
 ### `libp2p_shell_udp_socket`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 |  |  |  |  |
-| ARM64 |  |  |  |  |
+| x86-64 |  | ✅ | ✅ |  |
+| ARM64 |  | ✅ | ✅ |  |
 | RISC-V |  |  |  |  |
 
 ### `libp2p_shell_no_connreset`
 
 | ISA | Linux | Windows | macOS | `equal` |
 |---|---|---|---|---|
-| x86-64 |  |  |  |  |
-| ARM64 |  |  |  |  |
+| x86-64 |  | ✅ |  |  |
+| ARM64 |  | ✅ |  |  |
 | RISC-V |  |  |  |  |
