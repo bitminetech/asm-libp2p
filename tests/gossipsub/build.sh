@@ -1,11 +1,14 @@
 #!/bin/sh
 # Build the nodes of gossipsub-interop on Linux x86-64: the asm-libp2p node,
-# and the go, rust, jvm and nim nodes of libp2p/test-plans.
+# and the go, rust, jvm and nim nodes of the suite.
 # Usage: tests/gossipsub/build.sh WORK_DIR [IMPLEMENTATION ...]    (go, rust, jvm, nim; none: all 4)
 # Needs build/linux-x86_64 (tests/runner/docker.sh or the CI build job), clang,
 # and the toolchain of each implementation: Go, Rust, a JDK, Nim.
 #
-# WORK_DIR holds the test-plans checkout. The asm-libp2p node becomes the
+# WORK_DIR holds the test-plans checkout: the fork bitminetech/test-plans,
+# which is libp2p/test-plans 12e2ff4 with one fix to the go node of the
+# suite, so that its partial message manager cannot deadlock the pubsub
+# event loop. The asm-libp2p node becomes the
 # implementation "asm" of experiment.py. Shadow loads its shim with
 # LD_PRELOAD, so it cannot run a static binary: the node links libc
 # dynamically. The library makes its system calls itself; Shadow traps those
@@ -14,14 +17,16 @@ set -eu
 work=$1
 shift
 root=$(cd "$(dirname "$0")/../.." && pwd)
-plans=12e2ff491db21115b8e775e0eb7ee51056d203fb    # libp2p/test-plans
+plans=32875fd08f8264f03bf1a09e47d6ccbf90b19fa2    # bitminetech/test-plans, branch asm-libp2p
 lib=$root/build/linux-x86_64
 
 if [ ! -d "$work/test-plans" ]; then
     git init -q "$work/test-plans"
-    git -C "$work/test-plans" fetch -q --depth 1 https://github.com/libp2p/test-plans "$plans"
+    git -C "$work/test-plans" fetch -q --depth 1 https://github.com/bitminetech/test-plans "$plans"
     git -C "$work/test-plans" checkout -q FETCH_HEAD
 fi
+[ "$(git -C "$work/test-plans" rev-parse HEAD)" = "$plans" ] ||
+    { echo "$work/test-plans is not at $plans" >&2; exit 1; }
 gs=$work/test-plans/gossipsub-interop
 
 mkdir -p "$gs/asm-libp2p"

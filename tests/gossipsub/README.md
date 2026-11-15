@@ -1,6 +1,6 @@
 # gossipsub-interop
 
-The asm-libp2p node runs the gossipsub interop tests of [libp2p/test-plans](https://github.com/libp2p/test-plans/tree/12e2ff491db21115b8e775e0eb7ee51056d203fb/gossipsub-interop) in the [Shadow](https://shadow.github.io/) simulator, alone and in networks shared with go-libp2p, rust-libp2p, jvm-libp2p and nim-libp2p: the `subnet-blob-msg` scenario of full messages, and the three scenarios of partial messages. Shadow runs only on Linux x86-64.
+The asm-libp2p node runs the gossipsub interop tests of [libp2p/test-plans](https://github.com/libp2p/test-plans/tree/12e2ff491db21115b8e775e0eb7ee51056d203fb/gossipsub-interop), from the fork [bitminetech/test-plans](https://github.com/bitminetech/test-plans/tree/32875fd08f8264f03bf1a09e47d6ccbf90b19fa2/gossipsub-interop) with one fix to the go node, in the [Shadow](https://shadow.github.io/) simulator, alone and in networks shared with go-libp2p, rust-libp2p, jvm-libp2p and nim-libp2p: the `subnet-blob-msg` scenario of full messages, and the three scenarios of partial messages. Shadow runs only on Linux x86-64.
 
 ```bash
 tests/gossipsub/build.sh /path/to/work
@@ -13,9 +13,8 @@ tests/gossipsub/run.sh /path/to/work
 | File | What it does |
 |---|---|
 | `node.c` | The asm-libp2p node of the test. Test code in C: it reads the script, turns its gossipsub parameters into the config, holds the partial messages of the test, and writes the log lines of the suite; the library does the rest. |
-| `build.sh` | `build.sh WORK_DIR [IMPLEMENTATION ...]`: checks out test-plans in WORK_DIR, builds the asm-libp2p node as the implementation `asm`, and builds the go, rust, jvm and nim nodes. |
-| `run.sh` | `run.sh WORK_DIR [COMPOSITION ...]`: runs the `subnet-blob-msg` scenario in Shadow for each composition, such as `asm+go`, runs the check of the suite, and prints the means of the analysis of the suite; then runs the three partial message scenarios for each partial composition, with their check. `NODES=n` sets the nodes of each `subnet-blob-msg` run (default 32); `PARTIAL` lists the partial compositions (default `asm asm+go asm+rust asm+nim`); a run past `TIMEOUT` seconds (default 900) ends, with the processes using the most CPU. It fails only when an asm-libp2p node fails. |
-| `verdict.py` | `verdict.py OUTPUT_DIR SCENARIO [COUNT]`: names the nodes of a run that failed, each with its implementation, as the check of the suite judges them; exit status 0 when no asm-libp2p node failed, 1 when one did, 2 when the run cannot be read. |
+| `build.sh` | `build.sh WORK_DIR [IMPLEMENTATION ...]`: checks out the fork of test-plans in WORK_DIR, builds the asm-libp2p node as the implementation `asm`, and builds the go, rust, jvm and nim nodes. |
+| `run.sh` | `run.sh WORK_DIR [COMPOSITION ...]`: runs the `subnet-blob-msg` scenario in Shadow for each composition, such as `asm+go`, runs the check of the suite, and prints the means of the analysis of the suite; then runs the three partial message scenarios for each partial composition, with their check. `NODES=n` sets the nodes of each `subnet-blob-msg` run (default 32); `PARTIAL` lists the partial compositions (default `asm asm+go asm+rust asm+nim`); a run past `TIMEOUT` seconds (default 900) fails, with the processes using the most CPU. It exits 1 when a run fails. |
 
 [.github/workflows/ci.yml](../../.github/workflows/ci.yml) runs both scripts on GitHub's x86-64 Ubuntu runner.
 
@@ -28,16 +27,6 @@ tests/gossipsub/run.sh /path/to/work
 - Each node runs one implementation of the composition, picked at random with equal weights.
 - A composition passes when every message after the first 4 reaches every node (`checks/subnet_blob_msg.py`).
 - Implementations are interoperable when the composition does not change the results: the time to reach the nodes, and the duplicates.
-
-### What fails the run
-
-| Result | When |
-|---|---|
-| PASS | The check of the suite passes. |
-| OTHER | The check fails, and every node that failed runs another implementation (`verdict.py`); or a run past `TIMEOUT` has a process of another implementation as the busiest process besides Shadow. It counts as passed, and the line names the nodes or the process. |
-| FAIL | An asm-libp2p node fails, the run cannot be read, or a run past `TIMEOUT` has an asm-libp2p process, or a process of no implementation, as the busiest. `run.sh` then exits 1. |
-
-- A node of another implementation that fails can also come from a fault of an asm-libp2p node it talks to: an OTHER line is worth reading.
 
 ### Partial messages
 
@@ -73,7 +62,7 @@ tests/gossipsub/run.sh /path/to/work
 
 | Item | Value |
 |---|---|
-| test-plans | `12e2ff491db21115b8e775e0eb7ee51056d203fb` |
+| test-plans | The fork `bitminetech/test-plans`, branch `asm-libp2p`, commit `32875fd08f8264f03bf1a09e47d6ccbf90b19fa2`: `libp2p/test-plans` `12e2ff491db21115b8e775e0eb7ee51056d203fb` and one commit |
 | Shadow | v3.3.0, `5a05740bad995b6dbb90b8a16effecf59eceee09` |
 | Go | 1.24.1, the `go.mod` of the go node |
 | Rust | 1.100.0 |
@@ -83,6 +72,7 @@ tests/gossipsub/run.sh /path/to/work
 | `experiment.py` | `build.sh` adds `"asm": "asm-libp2p/gossipsub-bin"` to `IMPLEMENTATIONS` |
 | `run.py` | `build.sh` removes `make binaries`, which builds all 4 implementations before each run |
 | go node | Built with cgo instead of `-linkshared`: Shadow needs a dynamically linked binary |
+| go node, the commit of the fork | The callbacks of the pubsub event loop, OnIncomingRPC and OnEmitGossip, queue their work in order without blocking. In `12e2ff4` they sent to channels of 1 and 0 slots, while the goroutine that reads them calls PublishPartial, which waits for that same event loop: two partial RPCs back to back could block both for good |
 | asm-libp2p node | Linked dynamically against libc for the same reason; the library makes its system calls directly, and Shadow traps those with seccomp |
 | Shadow config | `run.sh` adds `experimental.native_preemption_enabled: true` for a composition with jvm: a JVM thread can spin without system calls, and Shadow then stops ("Busy loops" in Shadow's `docs/limitations.md`). Shadow preempts a thread after 100 ms of CPU time without a system call, and moves simulated time 10 ms. |
 
@@ -116,9 +106,7 @@ Run on 2026-11-15 in CI, the second attempt of the run of commit 043716e, with g
 | `partial-messages-chain`, 8 nodes | PASS | PASS | PASS | PASS |
 | `partial-messages-fanout`, 8 nodes | PASS | PASS | PASS | PASS |
 
-- The first attempt of the same run failed `partial-messages` asm+go: one go node stopped handling partial RPCs at 30.144 s of simulated time, while its stream readers kept reading RPCs until 37.1 s.
-- The go node of the suite (`go-libp2p/experiment.go`) can deadlock: its event loop hands each partial RPC to a channel of one slot, while the goroutine that reads the channel waits for the event loop to publish. A network of go nodes alone stopped the same way in Docker.
-- The run of main (commit 9d31783) failed the same way, at the same times; `run.sh` now gives such a run OTHER.
+- Before the fix of the fork, `partial-messages` asm+go failed in 2 of 3 runs: one go node stopped handling partial RPCs at 30.144 s of simulated time, while its stream readers kept reading RPCs until 37.1 s. A network of 8 go nodes alone stopped the same way in Docker, with 1 node of 8 done; with the fix, all 8 were done.
 
 ### Notes
 
