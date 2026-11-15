@@ -14,7 +14,8 @@ tests/gossipsub/run.sh /path/to/work
 |---|---|
 | `node.c` | The asm-libp2p node of the test. Test code in C: it reads the script, turns its gossipsub parameters into the config, holds the partial messages of the test, and writes the log lines of the suite; the library does the rest. |
 | `build.sh` | `build.sh WORK_DIR [IMPLEMENTATION ...]`: checks out test-plans in WORK_DIR, builds the asm-libp2p node as the implementation `asm`, and builds the go, rust, jvm and nim nodes. |
-| `run.sh` | `run.sh WORK_DIR [COMPOSITION ...]`: runs the `subnet-blob-msg` scenario in Shadow for each composition, such as `asm+go`, runs the check of the suite, and prints the means of the analysis of the suite; then runs the three partial message scenarios for each partial composition, with their check. `NODES=n` sets the nodes of each `subnet-blob-msg` run (default 32); `PARTIAL` lists the partial compositions (default `asm asm+go asm+rust asm+nim`); a run past `TIMEOUT` seconds (default 900) fails, with the processes using the most CPU. |
+| `run.sh` | `run.sh WORK_DIR [COMPOSITION ...]`: runs the `subnet-blob-msg` scenario in Shadow for each composition, such as `asm+go`, runs the check of the suite, and prints the means of the analysis of the suite; then runs the three partial message scenarios for each partial composition, with their check. `NODES=n` sets the nodes of each `subnet-blob-msg` run (default 32); `PARTIAL` lists the partial compositions (default `asm asm+go asm+rust asm+nim`); a run past `TIMEOUT` seconds (default 900) ends, with the processes using the most CPU. It fails only when an asm-libp2p node fails. |
+| `verdict.py` | `verdict.py OUTPUT_DIR SCENARIO [COUNT]`: names the nodes of a run that failed, each with its implementation, as the check of the suite judges them; exit status 0 when no asm-libp2p node failed, 1 when one did, 2 when the run cannot be read. |
 
 [.github/workflows/ci.yml](../../.github/workflows/ci.yml) runs both scripts on GitHub's x86-64 Ubuntu runner.
 
@@ -27,6 +28,16 @@ tests/gossipsub/run.sh /path/to/work
 - Each node runs one implementation of the composition, picked at random with equal weights.
 - A composition passes when every message after the first 4 reaches every node (`checks/subnet_blob_msg.py`).
 - Implementations are interoperable when the composition does not change the results: the time to reach the nodes, and the duplicates.
+
+### What fails the run
+
+| Result | When |
+|---|---|
+| PASS | The check of the suite passes. |
+| OTHER | The check fails, and every node that failed runs another implementation (`verdict.py`); or a run past `TIMEOUT` has a process of another implementation as the busiest process besides Shadow. It counts as passed, and the line names the nodes or the process. |
+| FAIL | An asm-libp2p node fails, the run cannot be read, or a run past `TIMEOUT` has an asm-libp2p process, or a process of no implementation, as the busiest. `run.sh` then exits 1. |
+
+- A node of another implementation that fails can also come from a fault of an asm-libp2p node it talks to: an OTHER line is worth reading.
 
 ### Partial messages
 
@@ -107,6 +118,7 @@ Run on 2026-11-15 in CI, the second attempt of the run of commit 043716e, with g
 
 - The first attempt of the same run failed `partial-messages` asm+go: one go node stopped handling partial RPCs at 30.144 s of simulated time, while its stream readers kept reading RPCs until 37.1 s.
 - The go node of the suite (`go-libp2p/experiment.go`) can deadlock: its event loop hands each partial RPC to a channel of one slot, while the goroutine that reads the channel waits for the event loop to publish. A network of go nodes alone stopped the same way in Docker.
+- The run of main (commit 9d31783) failed the same way, at the same times; `run.sh` now gives such a run OTHER.
 
 ### Notes
 

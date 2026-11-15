@@ -215,6 +215,8 @@ jobs:
             ${{ runner.temp }}/gs/*.log
             ${{ runner.temp }}/gs/*.check
             ${{ runner.temp }}/gs/test-plans/gossipsub-interop/shadow-outputs/*/plots/analysis.txt
+            ${{ runner.temp }}/gs/test-plans/gossipsub-interop/shadow-outputs/*/shadow.yaml
+            ${{ runner.temp }}/gs/test-plans/gossipsub-interop/shadow-outputs/*/params.json
             ${{ runner.temp }}/gs/test-plans/gossipsub-interop/shadow-outputs/*/hosts/*/*.stdout
             ${{ runner.temp }}/gs/test-plans/gossipsub-interop/shadow-outputs/*/hosts/*/*.stderr
 
