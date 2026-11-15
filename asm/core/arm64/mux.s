@@ -850,7 +850,7 @@ END_FUNCTION libp2p_mux_gather
 /* ---------------------------------------------------------------- Drain */
 
 /*
- * libp2p_drain(): for each connection, while the action list has room and the
+ * libp2p_drain(): for each TCP connection, while the action list has room and the
  * connection has send window: pending CLOSE actions; bytes before the
  * transport keys as they are; then Noise transport messages of bytes
  * before the muxer and muxer frames, as many as fit in one SEND action.
@@ -865,6 +865,8 @@ LOCAL_FUNCTION libp2p_drain
     ldr     w9, [x19, #C_PHASE]
     cbz     w9, 3f
     ldr     x9, [x19, #C_FLAGS]
+    tst     x9, #CF_QUIC                    /* asm-quic sends for QUIC connections */
+    b.ne    3f
     tst     x9, #CF_NEED_CLOSE
     b.eq    2f
     bl      libp2p_room

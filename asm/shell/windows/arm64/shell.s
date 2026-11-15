@@ -1,5 +1,5 @@
 /*
- * asm-libp2p shell for Windows on ARM64: TCP sockets, the clock and random
+ * asm-libp2p shell for Windows on ARM64: TCP and UDP sockets, the clock and random
  * bytes, through Winsock 2, kernel32 and bcrypt.
  * Requirements: docs/reference/shell.md. Layouts: include/libp2p.inc.
  *
@@ -30,6 +30,11 @@
 .set OS_EINVAL, 10022               /* WSAEINVAL, winerror.h */
 .set OS_FIONBIO, 0x8004667E         /* winsock2.h */
 .set OS_RNG_FLAGS, 2                /* bcrypt.h: BCRYPT_USE_SYSTEM_PREFERRED_RNG */
+.set OS_SOCK_DGRAM, 2               /* winsock2.h */
+.set OS_IPPROTO_UDP, 17             /* winsock2.h */
+.set OS_SO_SNDBUF, 0x1001           /* winsock2.h */
+.set OS_SO_RCVBUF, 0x1002           /* winsock2.h */
+.set OS_SIO_UDP_CONNRESET, 0x9800000C   /* _WSAIOW(IOC_VENDOR, 12), mstcpip.h */
 .set OS_WINSOCK_VERSION, 0x0202
 .set OS_WSADATA_SIZE, 416           /* sizeof(WSADATA) on 64-bit Windows: 408 */
 .set POLL_STRIDE, 16                /* context bytes per poll entry: the largest of every OS (Windows) */
@@ -116,6 +121,35 @@
     add     x3, sp, #248
     mov     w4, #4
     CALL_GLOBAL setsockopt
+    OS_RET_INT
+.endm
+
+/* x0 = a non-blocking UDP socket of family x0, or minus the error. */
+.macro OS_UDP_SOCKET
+    bl      libp2p_shell_udp_socket
+.endm
+
+/* setsockopt(x0, x1, x2) to the int value (at sp + 248). */
+.macro OS_SETSOCKOPT_INT value
+    MOV32   x9, \value
+    str     w9, [sp, #248]
+    add     x3, sp, #248
+    mov     w4, #4
+    CALL_GLOBAL setsockopt
+    OS_RET_INT
+.endm
+
+/* sendto(x0, x1, x2, sockaddr x4, its length x5) on a non-blocking socket. */
+.macro OS_SENDTO
+    mov     w3, #0
+    CALL_GLOBAL sendto
+    OS_RET_INT
+.endm
+
+/* recvfrom(x0, x1, x2, sockaddr x4, its length x5) on a non-blocking socket. */
+.macro OS_RECVFROM
+    mov     w3, #0
+    CALL_GLOBAL recvfrom
     OS_RET_INT
 .endm
 
@@ -342,6 +376,60 @@ LOCAL_FUNCTION libp2p_shell_poll
 9:  SLEAVE  0
 END_FUNCTION libp2p_shell_poll
 
+/*
+ * libp2p_shell_no_connreset(socket): WSAIoctl SIO_UDP_CONNRESET FALSE, so an
+ * ICMP port unreachable gives the UDP socket no WSAECONNRESET. The ninth
+ * argument (no completion routine) lies at sp.
+ */
+LOCAL_FUNCTION libp2p_shell_no_connreset
+    stp     x29, x30, [sp, #-16]!
+    UNWIND_SAVE_FPLR_X 16
+    mov     x29, sp
+    UNWIND_SET_FP
+    sub     sp, sp, #32
+    UNWIND_ALLOC 32
+    UNWIND_END_PROLOGUE
+    str     xzr, [sp]                       /* no completion routine */
+    str     wzr, [sp, #16]                  /* FALSE */
+    MOV32   w1, OS_SIO_UDP_CONNRESET
+    add     x2, sp, #16
+    mov     w3, #4
+    mov     x4, #0
+    mov     w5, #0
+    add     x6, sp, #20
+    mov     x7, #0
+    CALL_GLOBAL WSAIoctl
+    UNWIND_BEGIN_EPILOGUE
+    add     sp, sp, #32
+    UNWIND_FREE 32
+    ldp     x29, x30, [sp], #16
+    UNWIND_RESTORE_FPLR_X 16
+    UNWIND_END_EPILOGUE
+    ret
+END_FUNCTION libp2p_shell_no_connreset
+
+/* libp2p_shell_udp_socket(family) -> a non-blocking UDP socket with no WSAECONNRESET, or minus the error. */
+LOCAL_FUNCTION libp2p_shell_udp_socket
+    SENTER  0
+    mov     w1, #OS_SOCK_DGRAM
+    mov     w2, #OS_IPPROTO_UDP
+    CALL_GLOBAL socket
+    OS_RET_SOCKET
+    IF_ERROR_NEG 9f
+    mov     x19, x0
+    bl      libp2p_shell_nonblock
+    IF_ERROR_NEG 8f
+    mov     x0, x19
+    bl      libp2p_shell_no_connreset       /* reads still work without it: not an error */
+    mov     x0, x19
+    b       9f
+8:  mov     x20, x0
+    mov     x0, x19
+    CALL_GLOBAL closesocket
+    mov     x0, x20
+9:  SLEAVE  0
+END_FUNCTION libp2p_shell_udp_socket
+
 /* ---------------------------------------------------------------- Addresses */
 
 /* libp2p_shell_sockaddr(addr, sockaddr) -> its length: 16 for IPv4, 28 for IPv6. A leaf. */
@@ -427,7 +515,7 @@ LOCAL_FUNCTION libp2p_shell_layout
     and     x3, x3, #~7
     add     x4, x3, #LIBP2P_SE_FIXED        /* stride */
     mov     x5, #(LIBP2P_SH_FIXED + 8 * LIBP2P_SHELL_ACCEPTING)   /* poll array */
-    add     x6, x2, #(LIBP2P_SH_MAX_LISTEN + LIBP2P_SHELL_ACCEPTING)
+    add     x6, x2, #(LIBP2P_SH_MAX_LISTEN + LIBP2P_SH_MAX_UDP + LIBP2P_SHELL_ACCEPTING)
     mov     x9, #POLL_STRIDE
     madd    x6, x6, x9, x5                  /* entries */
     madd    x7, x2, x4, x6                  /* total */
@@ -481,6 +569,12 @@ FUNCTION libp2p_shell_init
 1:  str     x9, [x10], #8
     subs    x11, x11, #1
     b.ne    1b
+    str     xzr, [x20, #LIBP2P_SH_UDPS]     /* UDP sockets */
+    add     x10, x20, #LIBP2P_SH_UDP
+    mov     x11, #LIBP2P_SH_MAX_UDP
+11: str     x9, [x10], #8
+    subs    x11, x11, #1
+    b.ne    11b
     add     x10, x20, #LIBP2P_SH_FIXED      /* accepted sockets */
     mov     x11, #LIBP2P_SHELL_ACCEPTING
 2:  str     x9, [x10], #8
@@ -739,10 +833,140 @@ FUNCTION libp2p_shell_listen
 END_FUNCTION libp2p_shell_listen
 
 /*
+ * libp2p_shell_bind(context, addr, result) -> status: a non-blocking UDP
+ * socket bound to the address (port 0: any), IPv6 only for an IPv6
+ * address, with send and receive buffers of LIBP2P_UDP_BUFFER bytes asked
+ * for; result gets 0, its socket ID and the bound address, or the OS error.
+ * x19 context, x20 addr, x21 result, x22 family, x23 error, x24 socket.
+ */
+FUNCTION libp2p_shell_bind
+    SENTER  160
+    mov     x19, x0
+    mov     x20, x1
+    mov     x21, x2
+    mov     x9, #0
+1:  str     xzr, [x21, x9]
+    add     x9, x9, #8
+    cmp     x9, #LIBP2P_BR_SIZE
+    b.lo    1b
+    ldr     x9, [x19, #LIBP2P_SH_UDPS]
+    cmp     x9, #LIBP2P_SH_MAX_UDP
+    mov     x23, #OS_EINVAL
+    b.hs    80f
+    ldr     x9, [x20, #LIBP2P_ADDR_FAMILY]
+    cmp     x9, #6
+    mov     x0, #OS_AF_INET
+    mov     x10, #OS_AF_INET6
+    csel    x0, x10, x0, eq
+    mov     x22, x0
+    OS_UDP_SOCKET
+    IF_ERROR_NEG 81f
+    mov     x24, x0
+    cmp     x22, #OS_AF_INET6
+    b.ne    2f
+    mov     x0, x24
+    mov     x1, #OS_IPPROTO_IPV6
+    mov     x2, #OS_IPV6_V6ONLY
+    OS_SETSOCKOPT_ONE
+2:  mov     x0, x24                         /* the OS may give less: not an error */
+    mov     x1, #OS_SOL_SOCKET
+    mov     x2, #OS_SO_RCVBUF
+    OS_SETSOCKOPT_INT LIBP2P_UDP_BUFFER
+    mov     x0, x24
+    mov     x1, #OS_SOL_SOCKET
+    mov     x2, #OS_SO_SNDBUF
+    OS_SETSOCKOPT_INT LIBP2P_UDP_BUFFER
+    mov     x0, x20
+    add     x1, sp, #96
+    bl      libp2p_shell_sockaddr
+    mov     x2, x0
+    mov     x0, x24
+    add     x1, sp, #96
+    OS_BIND
+    IF_ERROR_NEG 82f
+    mov     x9, #128
+    str     x9, [sp, #224]
+    mov     x0, x24
+    add     x1, sp, #96
+    add     x2, sp, #224
+    OS_GETSOCKNAME
+    IF_ERROR_NEG 82f
+    add     x0, sp, #96
+    add     x1, x21, #LIBP2P_BR_ADDR
+    bl      libp2p_shell_address
+    ldr     x9, [x19, #LIBP2P_SH_UDPS]
+    str     x9, [x21, #LIBP2P_BR_SOCKET]
+    add     x10, x19, #LIBP2P_SH_UDP
+    str     x24, [x10, x9, lsl #3]
+    add     x9, x9, #1
+    str     x9, [x19, #LIBP2P_SH_UDPS]
+    b       90f
+82: neg     x23, x0
+    mov     x0, x24
+    OS_CLOSE
+    b       80f
+81: neg     x23, x0
+80: str     x23, [x21, #LIBP2P_BR_ERROR]
+90: mov     x0, #LIBP2P_OK
+    SLEAVE  160
+END_FUNCTION libp2p_shell_bind
+
+/*
+ * libp2p_shell_udp_read(context, events, index): the datagrams waiting on
+ * UDP socket index become DATAGRAM events, each of at most
+ * LIBP2P_UDP_RECEIVE bytes, while the event list has room for one; an error
+ * or an empty socket ends it.
+ * x19 context, x20 events, x21 socket ID, x22 native socket, x23 event, x24 bytes.
+ */
+LOCAL_FUNCTION libp2p_shell_udp_read
+    SENTER  160
+    mov     x19, x0
+    mov     x20, x1
+    mov     x21, x2
+    add     x9, x19, #LIBP2P_SH_UDP
+    ldr     x22, [x9, x21, lsl #3]
+1:  mov     x0, x20
+    bl      libp2p_shell_room
+    mov     x9, #(LIBP2P_EV_DG_DATA + LIBP2P_UDP_RECEIVE)
+    cmp     x0, x9
+    b.lo    9f
+    ldr     x9, [x20, #LIBP2P_BL_OFFSET]
+    ldr     x10, [x20, #LIBP2P_BL_COUNT]
+    add     x23, x20, x9
+    add     x23, x23, x10                   /* the event, not yet in the list */
+    mov     x9, #128
+    str     x9, [sp, #224]
+    mov     x0, x22
+    add     x1, x23, #LIBP2P_EV_DG_DATA
+    mov     x2, #LIBP2P_UDP_RECEIVE
+    add     x4, sp, #96
+    add     x5, sp, #224
+    OS_RECVFROM
+    IF_ERROR_NEG 9f
+    mov     x24, x0
+    add     x10, x24, #(LIBP2P_EV_DG_DATA + 7)
+    and     x10, x10, #~7
+    str     x10, [x23, #LIBP2P_EV_SIZE]
+    mov     x11, #LIBP2P_EVENT_DATAGRAM
+    str     x11, [x23, #LIBP2P_EV_KIND]
+    str     x21, [x23, #LIBP2P_EV_DG_SOCKET]
+    str     x24, [x23, #LIBP2P_EV_DG_COUNT]
+    add     x0, sp, #96
+    add     x1, x23, #LIBP2P_EV_DG_ADDR
+    bl      libp2p_shell_address
+    ldr     x10, [x23, #LIBP2P_EV_SIZE]
+    ldr     x11, [x20, #LIBP2P_BL_COUNT]
+    add     x11, x11, x10
+    str     x11, [x20, #LIBP2P_BL_COUNT]
+    b       1b
+9:  SLEAVE  160
+END_FUNCTION libp2p_shell_udp_read
+
+/*
  * libp2p_shell_perform(context, actions, events) -> status: does the shell
- * actions of a step in order: DIAL, ADOPT, REFUSE, SEND and CLOSE; results
- * known at once go to events (CONNECTED, DIAL_FAILED, SENT, CLOSED). Other
- * kinds are the application's.
+ * actions of a step in order: DIAL, ADOPT, REFUSE, SEND, CLOSE and
+ * SEND_DATAGRAM; results known at once go to events (CONNECTED, DIAL_FAILED,
+ * SENT, CLOSED). Other kinds are the application's.
  * x19 context, x20 events, x21 action, x22 end.
  */
 FUNCTION libp2p_shell_perform
@@ -902,7 +1126,7 @@ FUNCTION libp2p_shell_perform
 
     /* CLOSE */
 40: cmp     x9, #LIBP2P_ACTION_CLOSE
-    b.ne    80f
+    b.ne    50f
     mov     x0, x19
     ldr     x1, [x21, #LIBP2P_ACT_CONN]
     bl      libp2p_shell_entry
@@ -924,6 +1148,26 @@ FUNCTION libp2p_shell_perform
     ldr     x2, [x21, #LIBP2P_ACT_CONN]
     mov     x3, #0
     bl      libp2p_shell_conn_event
+    b       80f
+
+    /* SEND_DATAGRAM: sendto on the UDP socket of its ID; a datagram the OS does not take is lost, as UDP allows. */
+50: cmp     x9, #LIBP2P_ACTION_SEND_DATAGRAM
+    b.ne    80f
+    ldr     x9, [x21, #LIBP2P_ACT_DG_SOCKET]
+    ldr     x10, [x19, #LIBP2P_SH_UDPS]
+    cmp     x9, x10
+    b.hs    80f
+    add     x10, x19, #LIBP2P_SH_UDP
+    ldr     x23, [x10, x9, lsl #3]
+    add     x0, x21, #LIBP2P_ACT_DG_ADDR
+    add     x1, sp, #96
+    bl      libp2p_shell_sockaddr
+    mov     x5, x0
+    mov     x0, x23
+    add     x1, x21, #LIBP2P_ACT_DG_DATA
+    ldr     x2, [x21, #LIBP2P_ACT_DG_COUNT]
+    add     x4, sp, #96
+    OS_SENDTO
 80: ldr     x9, [x21, #LIBP2P_ACT_SIZE]
     add     x21, x21, x9
     b       1b
@@ -953,8 +1197,8 @@ END_FUNCTION libp2p_shell_move_any
  * timeout ms (a u64) for socket activity, then gives events: ACCEPTED for
  * new connections (up to 16 waiting for ADOPT), CONNECTED or DIAL_FAILED
  * when a dial ends, SENT as buffered bytes go out, RECEIVED with what a
- * socket holds (at most 65536 bytes, while the event list has room), and
- * CLOSED when a socket ends.
+ * socket holds (at most 65536 bytes, while the event list has room),
+ * CLOSED when a socket ends, and DATAGRAM for each datagram of a UDP socket.
  * x19 context, x20 events, x21 poll array, x22 poll count, x23 i, x24 entry,
  * x25 kind of the poll slot.
  */
@@ -1006,7 +1250,20 @@ FUNCTION libp2p_shell_wait
     add     x22, x22, #1
     add     x23, x23, #1
     b       3b
-5:  mov     x0, x21
+5:  mov     x23, #0                         /* UDP sockets */
+51: ldr     x9, [x19, #LIBP2P_SH_UDPS]
+    cmp     x23, x9
+    b.hs    52f
+    add     x10, x19, #LIBP2P_SH_UDP
+    ldr     x0, [x10, x23, lsl #3]
+    mov     x1, #OS_POLLIN
+    mov     x2, x22
+    mov     x3, x21
+    bl      libp2p_shell_poll_set
+    add     x22, x22, #1
+    add     x23, x23, #1
+    b       51b
+52: mov     x0, x21
     mov     x1, x22
     mov     x2, x26
     OS_POLL
@@ -1036,7 +1293,7 @@ FUNCTION libp2p_shell_wait
     mov     x23, #0
 8:  ldr     x9, [x19, #LIBP2P_SH_CAPACITY]
     cmp     x23, x9
-    b.hs    90f
+    b.hs    91f
     ldr     x10, [x19, #LIBP2P_SH_ENTRIES]
     add     x10, x19, x10
     ldr     x11, [x19, #LIBP2P_SH_STRIDE]
@@ -1122,6 +1379,27 @@ FUNCTION libp2p_shell_wait
     bl      libp2p_shell_drop
 89: add     x23, x23, #1
     b       8b
+
+    /* UDP sockets: their datagrams. */
+91: mov     x23, #0
+92: ldr     x9, [x19, #LIBP2P_SH_UDPS]
+    cmp     x23, x9
+    b.hs    90f
+    ldr     x9, [x19, #LIBP2P_SH_LISTENERS]
+    ldr     x10, [x19, #LIBP2P_SH_CAPACITY]
+    add     x0, x9, x10
+    add     x0, x0, x23
+    mov     x1, x21
+    bl      libp2p_shell_poll_events
+    mov     x9, #(OS_POLLIN | OS_POLLHUP | OS_POLLERR)
+    tst     x0, x9
+    b.eq    93f
+    mov     x0, x19
+    mov     x1, x20
+    mov     x2, x23
+    bl      libp2p_shell_udp_read
+93: add     x23, x23, #1
+    b       92b
 90: mov     x0, #LIBP2P_OK
     SLEAVE  160
 END_FUNCTION libp2p_shell_wait
@@ -1215,7 +1493,17 @@ FUNCTION libp2p_shell_close
     str     xzr, [x21, #LIBP2P_SE_STATE]
 51: add     x20, x20, #1
     b       5b
-6:  OS_CLEANUP x19
+6:  mov     x20, #0                         /* UDP sockets */
+61: ldr     x9, [x19, #LIBP2P_SH_UDPS]
+    cmp     x20, x9
+    b.hs    62f
+    add     x10, x19, #LIBP2P_SH_UDP
+    ldr     x0, [x10, x20, lsl #3]
+    OS_CLOSE
+    add     x20, x20, #1
+    b       61b
+62: str     xzr, [x19, #LIBP2P_SH_UDPS]
+    OS_CLEANUP x19
     mov     x0, #LIBP2P_OK
     SLEAVE  0
 END_FUNCTION libp2p_shell_close
@@ -1239,16 +1527,42 @@ LOCAL_FUNCTION libp2p_shell_poll_events
 END_FUNCTION libp2p_shell_poll_events
 
 /*
- * libp2p_shell_clock(tick) -> status: the time in ms since boot
- * (GetTickCount64) and 32 random bytes (BCryptGenRandom); LIBP2P_OS_ERROR
- * when the random bytes fail.
+ * libp2p_shell_clock(tick) -> status: the monotonic time in microseconds
+ * and in ms (QueryPerformanceCounter), the Unix time in seconds
+ * (GetSystemTimeAsFileTime) and 32 random bytes (BCryptGenRandom);
+ * LIBP2P_OS_ERROR when the random bytes fail.
  */
 FUNCTION libp2p_shell_clock
-    SENTER  0
+    SENTER  16
     mov     x19, x0
     mov     x20, #LIBP2P_OS_ERROR
-    CALL_GLOBAL GetTickCount64
-    str     x0, [x19, #LIBP2P_TICK_NOW]
+    add     x0, sp, #96
+    CALL_GLOBAL QueryPerformanceCounter
+    add     x0, sp, #104
+    CALL_GLOBAL QueryPerformanceFrequency
+    ldp     x9, x10, [sp, #96]              /* the count, the frequency */
+    udiv    x11, x9, x10
+    msub    x12, x11, x10, x9
+    MOV32   x13, 1000000
+    mul     x11, x11, x13
+    mul     x12, x12, x13
+    udiv    x12, x12, x10
+    add     x11, x11, x12
+    str     x11, [x19, #LIBP2P_TICK_US]
+    mov     x13, #1000
+    udiv    x11, x11, x13
+    str     x11, [x19, #LIBP2P_TICK_NOW]
+    add     x0, sp, #96
+    CALL_GLOBAL GetSystemTimeAsFileTime
+    ldr     x9, [sp, #96]
+    movz    x10, #0x8000                    /* 116444736000000000: 1970-01-01 in 100 ns units since 1601 */
+    movk    x10, #0xD53E, lsl #16
+    movk    x10, #0xB1DE, lsl #32
+    movk    x10, #0x019D, lsl #48
+    sub     x9, x9, x10
+    MOV32   x10, 10000000
+    udiv    x9, x9, x10
+    str     x9, [x19, #LIBP2P_TICK_UNIX]
     mov     x0, #0
     add     x1, x19, #LIBP2P_TICK_ENTROPY
     mov     w2, #32
@@ -1257,5 +1571,5 @@ FUNCTION libp2p_shell_clock
     cbnz    w0, 9f
     mov     x20, #LIBP2P_OK
 9:  mov     x0, x20
-    SLEAVE  0
+    SLEAVE  16
 END_FUNCTION libp2p_shell_clock

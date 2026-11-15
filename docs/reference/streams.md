@@ -487,8 +487,8 @@ libp2p_stream_open(conn, target, tag, proposals, count) -> stream
 
 ### Function does
 
-- Takes the next stream ID of this side: yamux steps by 2, mplex by 1.
-- Marks the stream to send SYN (yamux) or NewStream (mplex), and queues the multistream header and the first proposal, from `libp2p_gs_proposal` for gossipsub.
+- Takes the next stream ID of this side: yamux steps by 2, mplex by 1. On QUIC the ID is 0 until the asm-quic STREAM_OPENED action gives the asm-quic stream handle.
+- Marks the stream to send SYN (yamux), NewStream (mplex) or the asm-quic OPEN_STREAM (QUIC), and queues the multistream header and the first proposal, from `libp2p_gs_proposal` for gossipsub.
 - Gives 0 when it cannot: no slot, or no heap for the bytes; the stream and the proposals are then freed.
 
 ### Function never
@@ -1062,7 +1062,7 @@ libp2p_stream_append(stream, chunk)
 
 ## Type `Stream`
 
-One muxed stream: its muxer ID, negotiation, windows and queue.
+One stream of yamux, mplex or QUIC: its ID, negotiation, windows and queue.
 
 ### Layout
 
@@ -1071,7 +1071,7 @@ One muxed stream: its muxer ID, negotiation, windows and queue.
 | 0 | `gen` | u32 | Generation of the slot |
 | 4 | `used` | u32 | 1 while the slot is in use |
 | 8 | `conn` | u64 | Index of its connection |
-| 16 | `id` | u64 | The muxer stream ID |
+| 16 | `id` | u64 | The muxer stream ID; on QUIC, the asm-quic stream handle, or 0 before STREAM_OPENED |
 | 24 | `flags` | u64 | SF_ flags of include/state.inc |
 | 32 | `kind` | u64 | SK_NEGOTIATING, SK_GOSSIP_IN, SK_GOSSIP_OUT, SK_APP or SK_IDENTIFY |
 | 40 | `proto` | u64 | App protocol index, or the proposal accepted |
@@ -1098,6 +1098,7 @@ One muxed stream: its muxer ID, negotiation, windows and queue.
 | 336 | `rpc_varint` | u64 | The length prefix being read |
 | 344 | `rpc_shift` | u64 | Bits of the length prefix read |
 | 352 | `target` | u64 | The kind it becomes once negotiated |
+| 360 | `qflight` | u64 | QUIC: bytes written to asm-quic and not yet acknowledged, at most `quic_window` |
 
 ### Rules
 

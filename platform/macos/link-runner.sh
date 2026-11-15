@@ -15,7 +15,8 @@ case "$isa" in
 esac
 
 deps=""
-for name in sha256 hmac chacha20 x25519 secp256k1 sha512 ed25519; do deps="$deps $out/crypto-$name.o"; done
+for name in sha256 hmac chacha20 aes x25519 p256 secp256k1 sha512 ed25519; do deps="$deps $out/crypto-$name.o"; done
+deps="$deps $out/quic.o"
 clang -arch $arch -mmacosx-version-min=11.0 -std=c11 -O2 -Wall -Wextra -Werror \
     "$root/tests/runner/runner.c" -I"$root/platform/macos" "$root/tests/runner/abi_$isa.s" \
     "$out/libasm-libp2p.a" $deps -o "$out/runner"

@@ -1,5 +1,5 @@
 /*
- * A live test against Ethereum mainnet consensus clients over TCP.
+ * A live test against Ethereum mainnet consensus clients over TCP and QUIC.
  *
  * Usage: node PEERS DIGEST [DIALS] [SECONDS]
  *   PEERS    the output of tests/mainnet/peers.py
@@ -7,11 +7,12 @@
  *            another digest are skipped
  *   DIALS    peers to dial (default 100)
  *   SECONDS  run time (default 120)
- * Environment: ONLY=IP dials only that address; TRACE=1 prints the bytes of
- * each connection and every failure with its address.
+ * Environment: ONLY=IP dials only that address; TRANSPORT=tcp or
+ * TRANSPORT=quic dials only the lines of that transport; TRACE=1 prints the
+ * bytes of each TCP connection and every failure with its address.
  *
- * The node uses a secp256k1 identity, offers yamux then mplex, and dials
- * the peers. On each connection it sends a Status request, answers Status,
+ * The node uses a secp256k1 identity, offers yamux then mplex over TCP, has
+ * QUIC on with one UDP socket, and dials the peers. On each connection it sends a Status request, answers Status,
  * Ping, Metadata and Goodbye requests (phase0 p2p-interface req/resp, as
  * Lantern will), subscribes to the global gossip topics and counts the
  * messages it gets. It speaks gossipsub v1.3 with the Partial Messages
@@ -250,6 +251,13 @@ static int msg_topic[MAX_TRACK];
 static char dial_ip[4096][64];
 static int trace;
 static int connected, peak, dial_failed[16], stream_failed[16], statuses, inbound[NPROTO], goodbyes;
+/* QUIC: the transport of each peer, by the slot index of its handle; messages that came over QUIC. */
+#define MAX_PEER_SLOTS 1024
+static uint64_t peer_handle_of[MAX_PEER_SLOTS];
+static uint8_t peer_quic[MAX_PEER_SLOTS];
+static int quic_connected, quic_peak;
+static long quic_messages, quic_new;
+static uint8_t msg_quic[MAX_TRACK];
 static long topic_new[NALL], topic_dup, subscriptions;
 static uint8_t digest[4];
 static char topic_names[NALL][128];
@@ -388,6 +396,9 @@ static void handle_actions(void) {
             act_peer_connected *d = (act_peer_connected *)p;
             connected++;
             if (connected > peak) peak = connected;
+            peer_handle_of[(uint32_t)d->peer % MAX_PEER_SLOTS] = d->peer;
+            peer_quic[(uint32_t)d->peer % MAX_PEER_SLOTS] = d->transport == LIBP2P_QUIC;
+            if (d->transport == LIBP2P_QUIC && ++quic_connected > quic_peak) quic_peak = quic_connected;
             if (d->direction == 1) {
                 ev_open_stream *o = ev_add(EV_OPEN_STREAM, sizeof *o + 2 * sizeof(libp2p_proto));
                 o->peer = d->peer;
@@ -400,8 +411,14 @@ static void handle_actions(void) {
             }
             break;
         }
-        case ACT_PEER_DISCONNECTED:
+        case ACT_PEER_DISCONNECTED: {
+            uint64_t ph = ((act_peer_disconnected *)p)->peer;
             connected--;
+            if (peer_handle_of[(uint32_t)ph % MAX_PEER_SLOTS] == ph && peer_quic[(uint32_t)ph % MAX_PEER_SLOTS]) {
+                quic_connected--;
+                peer_quic[(uint32_t)ph % MAX_PEER_SLOTS] = 0;
+            }
+        }
             if (trace) printf("peer %llx disconnected\n", (unsigned long long)((act_peer_disconnected *)p)->peer);
             break;
         case ACT_DIAL_FAILED: {
@@ -482,6 +499,9 @@ static void handle_actions(void) {
             int slot = (int)(m->handle % MAX_TRACK);
             msg_handle[slot] = m->handle;
             msg_topic[slot] = -1;
+            msg_quic[slot] = peer_handle_of[(uint32_t)m->peer % MAX_PEER_SLOTS] == m->peer &&
+                             peer_quic[(uint32_t)m->peer % MAX_PEER_SLOTS];
+            quic_messages += msg_quic[slot];
             for (size_t k = 0; k < NALL; k++)
                 if (strlen(topic_names[k]) == m->topic_len && !memcmp(topic_names[k], m->topic, m->topic_len))
                     msg_topic[slot] = (int)k;
@@ -492,6 +512,7 @@ static void handle_actions(void) {
             if (m->status == MSG_NEW) {
                 int slot = (int)(m->handle % MAX_TRACK);
                 if (msg_handle[slot] == m->handle && msg_topic[slot] >= 0) topic_new[msg_topic[slot]]++;
+                if (msg_handle[slot] == m->handle) quic_new += msg_quic[slot];
                 ev_conn *e = ev_add(EV_VALIDATION, 32);
                 e->conn = m->handle;
                 e->value = LIBP2P_IGNORE;
@@ -582,6 +603,8 @@ static void summary(uint64_t secs) {
     long columns = 0;
     for (size_t k = NTOPIC; k < NALL; k++) columns += topic_new[k];
     printf(" data_column_sidecar_0-%d %ld, duplicates %ld\n", NCOLUMN - 1, columns, topic_dup);
+    printf("  QUIC: peers connected %d (peak %d), messages %ld, new messages %ld\n", quic_connected, quic_peak,
+           quic_messages, quic_new);
     printf("  partial: %ld PARTIAL from %d peers (metadata %ld, message %ld, %ld bytes), gossip peers %ld; ", partials,
            partial_peers, partial_meta, partial_msg, partial_bytes, partial_gossip);
     if (pp_count >= 0) printf("mesh of subnet 0: %ld partial peers (requests %ld, supports %ld)\n", pp_count, pp_requests, pp_supports);
@@ -647,6 +670,10 @@ int main(int argc, char **argv) {
     c->idontwant_threshold = 1024; c->dontwant_slots = 256; c->dontwant_ttl = 3;
     c->max_idontwant_messages = 1000; c->max_idontwant_length = 10;
     c->gossipsub_v13 = 1; c->partial_messages = 1;   /* the Partial Messages extension of gossipsub v1.3 */
+    c->quic = LIBP2P_QUIC_ON;               /* QUIC: dial only */
+    c->quic_heap = 1ull << 28; c->quic_idle_ms = 30000; c->quic_keep_alive_ms = 10000;
+    c->quic_max_data = 1 << 24; c->quic_stream_data = 1 << 22; c->quic_max_streams = 256;
+    c->quic_sent = 1024; c->quic_window = 1 << 22;
 
     uint64_t size = 0;
     if (libp2p_state_size(&cfg, &size)) die("libp2p_state_size");
@@ -668,6 +695,9 @@ int main(int argc, char **argv) {
     shell = calloc(1, shell_size);
     ((uint64_t *)shell)[0] = shell_size;
     if (libp2p_shell_init(&sp, shell)) die("libp2p_shell_init");
+    libp2p_addr any = {4, 0, {0}};          /* the UDP socket QUIC dials from */
+    libp2p_bind_result br;
+    if (libp2p_shell_bind(shell, &any, &br) || br.error) die("bind: error %llu", (unsigned long long)br.error);
 
     for (size_t k = 0; k < NTOPIC; k++) {
         snprintf(topic_names[k], sizeof topic_names[k], "/eth2/%02x%02x%02x%02x/%s/ssz_snappy", digest[0], digest[1],
@@ -689,17 +719,21 @@ int main(int argc, char **argv) {
 
     FILE *f = fopen(argv[1], "r");
     if (!f) die("cannot read %s", argv[1]);
-    char ip[64], idhex[128], dhex[16];
+    char ip[64], idhex[128], dhex[16], tr[8];
     int port, n = 0;
     trace = getenv("TRACE") != NULL;
-    const char *only = getenv("ONLY");
-    while (n < dials && n < 4096 && fscanf(f, "%63s %d %127s %15s", ip, &port, idhex, dhex) == 4) {
-        if (strcmp(dhex, argv[2]) || (only && strcmp(ip, only))) continue;
-        snprintf(dial_ip[n], sizeof dial_ip[n], "%s:%d", ip, port);
+    const char *only = getenv("ONLY"), *want = getenv("TRANSPORT");
+    while (n < dials && n < 4096 && fscanf(f, "%63s %d %127s %15s %7s", ip, &port, idhex, dhex, tr) == 5) {
+        if (strcmp(dhex, argv[2]) || (only && strcmp(ip, only)) || (want && strcmp(tr, want))) continue;
+        snprintf(dial_ip[n], sizeof dial_ip[n], "%s:%d/%s", ip, port, tr);
         ev_dial *d = ev_add(EV_DIAL, sizeof *d);
         d->tag = (uint64_t)n;
         d->addr.family = 4;
         d->addr.port = (uint64_t)port;
+        if (!strcmp(tr, "quic")) {
+            d->transport = LIBP2P_QUIC;
+            d->socket = br.socket;
+        }
         if (inet_pton(AF_INET, ip, d->addr.ip) != 1) die("bad ip %s", ip);
         d->id_len = strlen(idhex) / 2;
         for (size_t k = 0; k < d->id_len; k++) sscanf(idhex + 2 * k, "%2hhx", &d->id[k]);

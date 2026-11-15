@@ -1,5 +1,5 @@
 /*
- * asm-libp2p shell for macOS on x86-64: TCP sockets, the clock and random
+ * asm-libp2p shell for macOS on x86-64: TCP and UDP sockets, the clock and random
  * bytes, through libSystem. AT&T syntax.
  * Requirements: docs/reference/shell.md. Layouts: include/libp2p.inc.
  *
@@ -39,6 +39,10 @@
 .set OS_FD_CLOEXEC, 1               /* sys/fcntl.h */
 .set OS_O_NONBLOCK, 4               /* sys/fcntl.h */
 .set OS_CLOCK_MONOTONIC, 6          /* time.h */
+.set OS_CLOCK_REALTIME, 0           /* time.h */
+.set OS_SOCK_DGRAM, 2               /* sys/socket.h */
+.set OS_SO_SNDBUF, 0x1001           /* sys/socket.h */
+.set OS_SO_RCVBUF, 0x1002           /* sys/socket.h */
 .set POLL_STRIDE, 16                /* context bytes per poll entry: the largest of every OS (Windows) */
 .set NONE_SOCKET, -1
 
@@ -112,6 +116,34 @@
     mov     $(4), %r8d
     CALL_GLOBAL setsockopt
     OS_RET_INT
+.endm
+
+/* rax = a non-blocking UDP socket of family rdi, or minus the error. */
+.macro OS_UDP_SOCKET
+    call    libp2p_shell_udp_socket
+.endm
+
+/* setsockopt(rdi, rsi, rdx) to the int value (at L_ONE). */
+.macro OS_SETSOCKOPT_INT value
+    movl    $(\value), L_ONE(%rsp)
+    lea     L_ONE(%rsp), %rcx
+    mov     $(4), %r8d
+    CALL_GLOBAL setsockopt
+    OS_RET_INT
+.endm
+
+/* sendto(rdi, rsi, rdx, sockaddr r8, its length r9) without blocking. */
+.macro OS_SENDTO
+    mov     $OS_MSG_DONTWAIT, %ecx
+    CALL_GLOBAL sendto
+    OS_RET_SIZE
+.endm
+
+/* recvfrom(rdi, rsi, rdx, sockaddr r8, its length r9) without blocking. */
+.macro OS_RECVFROM
+    mov     $OS_MSG_DONTWAIT, %ecx
+    CALL_GLOBAL recvfrom
+    OS_RET_SIZE
 .endm
 
 .macro OS_BIND
@@ -317,6 +349,27 @@ LOCAL_FUNCTION libp2p_shell_accept_one
 9:  SLEAVE  FRAME_SMALL
 END_FUNCTION libp2p_shell_accept_one
 
+/* libp2p_shell_udp_socket(family) -> a prepared UDP socket, or minus errno. rbx socket, rbp error. */
+LOCAL_FUNCTION libp2p_shell_udp_socket
+    SENTER  FRAME_SMALL
+    mov     $OS_SOCK_DGRAM, %esi
+    xor     %edx, %edx
+    CALL_GLOBAL socket
+    OS_RET_INT
+    IF_ERROR_NEG 9f
+    mov     %rax, %rbx
+    mov     %rax, %rdi
+    call    libp2p_shell_prepare
+    IF_ERROR_NEG 8f
+    mov     %rbx, %rax
+    jmp     9f
+8:  mov     %rax, %rbp
+    mov     %rbx, %rdi
+    CALL_GLOBAL close
+    mov     %rbp, %rax
+9:  SLEAVE  FRAME_SMALL
+END_FUNCTION libp2p_shell_udp_socket
+
 /* ---------------------------------------------------------------- Addresses */
 
 /* libp2p_shell_sockaddr(addr, sockaddr) -> its length: 16 for IPv4, 28 for IPv6. A leaf. */
@@ -404,7 +457,7 @@ LOCAL_FUNCTION libp2p_shell_layout
     and     $-8, %r8
     lea     LIBP2P_SE_FIXED(%r8), %r9       /* stride */
     mov     $(LIBP2P_SH_FIXED + 8 * LIBP2P_SHELL_ACCEPTING), %r10  /* poll array */
-    lea     (LIBP2P_SH_MAX_LISTEN + LIBP2P_SHELL_ACCEPTING)(%rcx), %r11
+    lea     (LIBP2P_SH_MAX_LISTEN + LIBP2P_SH_MAX_UDP + LIBP2P_SHELL_ACCEPTING)(%rcx), %r11
     imul    $POLL_STRIDE, %r11, %r11
     add     %r10, %r11                      /* entries */
     mov     %rcx, %rax
@@ -462,6 +515,13 @@ FUNCTION libp2p_shell_init
     add     $8, %rax
     dec     %rcx
     jnz     1b
+    movq    $0, LIBP2P_SH_UDPS(%rbp)        /* UDP sockets */
+    lea     LIBP2P_SH_UDP(%rbp), %rax
+    mov     $LIBP2P_SH_MAX_UDP, %ecx
+11: movq    $NONE_SOCKET, (%rax)
+    add     $8, %rax
+    dec     %rcx
+    jnz     11b
     lea     LIBP2P_SH_FIXED(%rbp), %rax     /* accepted sockets */
     mov     $LIBP2P_SHELL_ACCEPTING, %ecx
 2:  movq    $NONE_SOCKET, (%rax)
@@ -724,10 +784,133 @@ FUNCTION libp2p_shell_listen
 END_FUNCTION libp2p_shell_listen
 
 /*
+ * libp2p_shell_bind(context, addr, result) -> status: a non-blocking UDP
+ * socket bound to the address (port 0: any), IPv6 only for an IPv6
+ * address, with send and receive buffers of LIBP2P_UDP_BUFFER bytes asked
+ * for; result gets 0, its socket ID and the bound address, or the OS error.
+ * rbx context, rbp addr, r12 result, r13 family, r14 socket, r15 error.
+ */
+FUNCTION libp2p_shell_bind
+    SENTER  FRAME_BIG
+    mov     %rdi, %rbx
+    mov     %rsi, %rbp
+    mov     %rdx, %r12
+    xor     %eax, %eax
+    mov     %rax, (%r12)
+    mov     %rax, 8(%r12)
+    mov     %rax, 16(%r12)
+    mov     %rax, 24(%r12)
+    mov     %rax, 32(%r12)
+    mov     %rax, 40(%r12)
+    mov     $OS_EINVAL, %r15d
+    cmpq    $LIBP2P_SH_MAX_UDP, LIBP2P_SH_UDPS(%rbx)
+    jae     80f
+    mov     $OS_AF_INET, %edi
+    mov     $OS_AF_INET6, %eax
+    cmpq    $6, LIBP2P_ADDR_FAMILY(%rbp)
+    cmove   %rax, %rdi
+    mov     %rdi, %r13
+    OS_UDP_SOCKET
+    IF_ERROR_NEG 81f
+    mov     %rax, %r14                      /* the socket */
+    cmp     $OS_AF_INET6, %r13
+    jne     2f
+    mov     %r14, %rdi
+    mov     $OS_IPPROTO_IPV6, %esi
+    mov     $OS_IPV6_V6ONLY, %edx
+    OS_SETSOCKOPT_ONE
+2:  mov     %r14, %rdi                      /* the OS may give less: not an error */
+    mov     $OS_SOL_SOCKET, %esi
+    mov     $OS_SO_RCVBUF, %edx
+    OS_SETSOCKOPT_INT LIBP2P_UDP_BUFFER
+    mov     %r14, %rdi
+    mov     $OS_SOL_SOCKET, %esi
+    mov     $OS_SO_SNDBUF, %edx
+    OS_SETSOCKOPT_INT LIBP2P_UDP_BUFFER
+    mov     %rbp, %rdi
+    lea     L_SA(%rsp), %rsi
+    call    libp2p_shell_sockaddr
+    mov     %rax, %rdx
+    mov     %r14, %rdi
+    lea     L_SA(%rsp), %rsi
+    OS_BIND
+    IF_ERROR_NEG 82f
+    movq    $128, L_SALEN(%rsp)
+    mov     %r14, %rdi
+    lea     L_SA(%rsp), %rsi
+    lea     L_SALEN(%rsp), %rdx
+    OS_GETSOCKNAME
+    IF_ERROR_NEG 82f
+    lea     L_SA(%rsp), %rdi
+    lea     LIBP2P_BR_ADDR(%r12), %rsi
+    call    libp2p_shell_address
+    mov     LIBP2P_SH_UDPS(%rbx), %rax
+    mov     %rax, LIBP2P_BR_SOCKET(%r12)
+    mov     %r14, LIBP2P_SH_UDP(%rbx,%rax,8)
+    inc     %rax
+    mov     %rax, LIBP2P_SH_UDPS(%rbx)
+    jmp     90f
+82: neg     %rax
+    mov     %rax, %r15
+    mov     %r14, %rdi
+    OS_CLOSE
+    jmp     80f
+81: neg     %rax
+    mov     %rax, %r15
+80: mov     %r15, LIBP2P_BR_ERROR(%r12)
+90: xor     %eax, %eax
+    SLEAVE  FRAME_BIG
+END_FUNCTION libp2p_shell_bind
+
+/*
+ * libp2p_shell_udp_read(context, events, index): the datagrams waiting on
+ * UDP socket index become DATAGRAM events, each of at most
+ * LIBP2P_UDP_RECEIVE bytes, while the event list has room for one; an error
+ * or an empty socket ends it.
+ * rbx context, rbp events, r12 socket ID, r13 native socket, r14 event, r15 bytes.
+ */
+LOCAL_FUNCTION libp2p_shell_udp_read
+    SENTER  FRAME_BIG
+    mov     %rdi, %rbx
+    mov     %rsi, %rbp
+    mov     %rdx, %r12
+    mov     LIBP2P_SH_UDP(%rbx,%r12,8), %r13
+1:  mov     %rbp, %rdi
+    call    libp2p_shell_room
+    cmp     $(LIBP2P_EV_DG_DATA + LIBP2P_UDP_RECEIVE), %rax
+    jb      9f
+    mov     LIBP2P_BL_OFFSET(%rbp), %r14
+    add     LIBP2P_BL_COUNT(%rbp), %r14
+    add     %rbp, %r14                      /* the event, not yet in the list */
+    movq    $128, L_SALEN(%rsp)
+    mov     %r13, %rdi
+    lea     LIBP2P_EV_DG_DATA(%r14), %rsi
+    mov     $LIBP2P_UDP_RECEIVE, %edx
+    lea     L_SA(%rsp), %r8
+    lea     L_SALEN(%rsp), %r9
+    OS_RECVFROM
+    IF_ERROR_NEG 9f
+    mov     %rax, %r15
+    lea     (LIBP2P_EV_DG_DATA + 7)(%r15), %rax
+    and     $-8, %rax
+    mov     %rax, LIBP2P_EV_SIZE(%r14)
+    movq    $LIBP2P_EVENT_DATAGRAM, LIBP2P_EV_KIND(%r14)
+    mov     %r12, LIBP2P_EV_DG_SOCKET(%r14)
+    mov     %r15, LIBP2P_EV_DG_COUNT(%r14)
+    lea     L_SA(%rsp), %rdi
+    lea     LIBP2P_EV_DG_ADDR(%r14), %rsi
+    call    libp2p_shell_address
+    mov     LIBP2P_EV_SIZE(%r14), %rax
+    add     %rax, LIBP2P_BL_COUNT(%rbp)
+    jmp     1b
+9:  SLEAVE  FRAME_BIG
+END_FUNCTION libp2p_shell_udp_read
+
+/*
  * libp2p_shell_perform(context, actions, events) -> status: does the shell
- * actions of a step in order: DIAL, ADOPT, REFUSE, SEND and CLOSE; results
- * known at once go to events (CONNECTED, DIAL_FAILED, SENT, CLOSED). Other
- * kinds are the application's.
+ * actions of a step in order: DIAL, ADOPT, REFUSE, SEND, CLOSE and
+ * SEND_DATAGRAM; results known at once go to events (CONNECTED, DIAL_FAILED,
+ * SENT, CLOSED). Other kinds are the application's.
  * rbx context, rbp events, r12 action, r13 end, r14 entry, r15 a socket, a
  * count or an error.
  */
@@ -878,7 +1061,7 @@ FUNCTION libp2p_shell_perform
 
     /* CLOSE */
 40: cmp     $LIBP2P_ACTION_CLOSE, %rax
-    jne     80f
+    jne     50f
     mov     %rbx, %rdi
     mov     LIBP2P_ACT_CONN(%r12), %rsi
     call    libp2p_shell_entry
@@ -900,6 +1083,24 @@ FUNCTION libp2p_shell_perform
     mov     LIBP2P_ACT_CONN(%r12), %rdx
     xor     %ecx, %ecx
     call    libp2p_shell_conn_event
+    jmp     80f
+
+    /* SEND_DATAGRAM: sendto on the UDP socket of its ID; a datagram the OS does not take is lost, as UDP allows. */
+50: cmp     $LIBP2P_ACTION_SEND_DATAGRAM, %rax
+    jne     80f
+    mov     LIBP2P_ACT_DG_SOCKET(%r12), %rax
+    cmp     LIBP2P_SH_UDPS(%rbx), %rax
+    jae     80f
+    mov     LIBP2P_SH_UDP(%rbx,%rax,8), %r15
+    lea     LIBP2P_ACT_DG_ADDR(%r12), %rdi
+    lea     L_SA(%rsp), %rsi
+    call    libp2p_shell_sockaddr
+    mov     %rax, %r9
+    mov     %r15, %rdi
+    lea     LIBP2P_ACT_DG_DATA(%r12), %rsi
+    mov     LIBP2P_ACT_DG_COUNT(%r12), %rdx
+    lea     L_SA(%rsp), %r8
+    OS_SENDTO
 80: add     LIBP2P_ACT_SIZE(%r12), %r12
     jmp     1b
 90: xor     %eax, %eax
@@ -911,8 +1112,8 @@ END_FUNCTION libp2p_shell_perform
  * timeout ms (a u64) for socket activity, then gives events: ACCEPTED for
  * new connections (up to 16 waiting for ADOPT), CONNECTED or DIAL_FAILED
  * when a dial ends, SENT as buffered bytes go out, RECEIVED with what a
- * socket holds (at most 65536 bytes, while the event list has room), and
- * CLOSED when a socket ends.
+ * socket holds (at most 65536 bytes, while the event list has room),
+ * CLOSED when a socket ends, and DATAGRAM for each datagram of a UDP socket.
  * rbx context, rbp events, r12 poll array, r13 poll count, r14 i, r15
  * entry; L_S0 listeners, L_S1 the timeout then the revents, L_S2 a size or
  * an error, L_S3 the event.
@@ -963,7 +1164,18 @@ FUNCTION libp2p_shell_wait
     inc     %r13
     inc     %r14
     jmp     3b
-5:  mov     %r12, %rdi
+5:  xor     %r14d, %r14d                    /* UDP sockets */
+51: cmp     LIBP2P_SH_UDPS(%rbx), %r14
+    jae     52f
+    mov     LIBP2P_SH_UDP(%rbx,%r14,8), %rdi
+    mov     $OS_POLLIN, %esi
+    mov     %r13, %rdx
+    mov     %r12, %rcx
+    call    libp2p_shell_poll_set
+    inc     %r13
+    inc     %r14
+    jmp     51b
+52: mov     %r12, %rdi
     mov     %r13, %rsi
     mov     L_S1(%rsp), %rdx
     OS_POLL
@@ -992,7 +1204,7 @@ FUNCTION libp2p_shell_wait
     mov     %rax, L_S0(%rsp)
     xor     %r14d, %r14d
 8:  cmp     LIBP2P_SH_CAPACITY(%rbx), %r14
-    jae     90f
+    jae     91f
     mov     LIBP2P_SH_STRIDE(%rbx), %r15
     imul    %r14, %r15
     add     LIBP2P_SH_ENTRIES(%rbx), %r15
@@ -1079,6 +1291,24 @@ FUNCTION libp2p_shell_wait
     call    libp2p_shell_drop
 89: inc     %r14
     jmp     8b
+
+    /* UDP sockets: their datagrams. */
+91: xor     %r14d, %r14d
+92: cmp     LIBP2P_SH_UDPS(%rbx), %r14
+    jae     90f
+    mov     L_S0(%rsp), %rdi
+    add     LIBP2P_SH_CAPACITY(%rbx), %rdi
+    add     %r14, %rdi
+    mov     %r12, %rsi
+    call    libp2p_shell_poll_events
+    test    $(OS_POLLIN | OS_POLLHUP | OS_POLLERR), %eax
+    jz      93f
+    mov     %rbx, %rdi
+    mov     %rbp, %rsi
+    mov     %r14, %rdx
+    call    libp2p_shell_udp_read
+93: inc     %r14
+    jmp     92b
 90: xor     %eax, %eax
     SLEAVE  FRAME_BIG
 END_FUNCTION libp2p_shell_wait
@@ -1166,7 +1396,15 @@ FUNCTION libp2p_shell_close
     movq    $0, LIBP2P_SE_STATE(%r12)
 51: inc     %rbp
     jmp     5b
-6:  OS_CLEANUP %rbx
+6:  xor     %ebp, %ebp                      /* UDP sockets */
+61: cmp     LIBP2P_SH_UDPS(%rbx), %rbp
+    jae     62f
+    mov     LIBP2P_SH_UDP(%rbx,%rbp,8), %rdi
+    OS_CLOSE
+    inc     %rbp
+    jmp     61b
+62: movq    $0, LIBP2P_SH_UDPS(%rbx)
+    OS_CLEANUP %rbx
     xor     %eax, %eax
     SLEAVE  FRAME_SMALL
 END_FUNCTION libp2p_shell_close
@@ -1191,9 +1429,9 @@ LOCAL_FUNCTION libp2p_shell_poll_events
 END_FUNCTION libp2p_shell_poll_events
 
 /*
- * libp2p_shell_clock(tick) -> status: the monotonic time in ms
- * (clock_gettime_nsec_np) and 32 random bytes (getentropy); LIBP2P_OS_ERROR
- * when either fails. rbx tick, rbp status.
+ * libp2p_shell_clock(tick) -> status: the monotonic time in microseconds
+ * and in ms, the Unix time in seconds (clock_gettime_nsec_np) and 32 random
+ * bytes (getentropy); LIBP2P_OS_ERROR when one fails. rbx tick, rbp status.
  */
 FUNCTION libp2p_shell_clock
     SENTER  FRAME_SMALL
@@ -1204,9 +1442,20 @@ FUNCTION libp2p_shell_clock
     test    %rax, %rax
     jz      9f
     xor     %edx, %edx
-    mov     $1000000, %ecx
+    mov     $1000, %ecx
+    div     %rcx
+    mov     %rax, LIBP2P_TICK_US(%rbx)
+    xor     %edx, %edx
     div     %rcx
     mov     %rax, LIBP2P_TICK_NOW(%rbx)
+    mov     $OS_CLOCK_REALTIME, %edi
+    CALL_GLOBAL clock_gettime_nsec_np
+    test    %rax, %rax
+    jz      9f
+    xor     %edx, %edx
+    mov     $1000000000, %ecx
+    div     %rcx
+    mov     %rax, LIBP2P_TICK_UNIX(%rbx)
     lea     LIBP2P_TICK_ENTROPY(%rbx), %rdi
     mov     $32, %esi
     CALL_GLOBAL getentropy

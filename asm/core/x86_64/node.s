@@ -26,12 +26,15 @@
  * config and writes the table offsets and counts at tables (the ST_TABLES
  * fields), in this order: connections, streams, peers, topics, peer x
  * topic, seen, seen index, message cache, its index, pending, promises,
- * protocols, IDONTWANT rings, heap.
+ * protocols, IDONTWANT rings, heap; with QUIC on, then the asm-quic stream
+ * and connection maps, the asm-quic event and action lists, and the
+ * asm-quic state, whose config quic_state_size checks.
  * rbx config, rbp tables, r12 offset, r13 connections then other counts;
- * X23 streams, X24 peers, X25 topics, X26 protocols.
+ * X23 streams, X24 peers, X25 topics, X26 protocols. The asm-quic Config at
+ * 32(%rsp), its state size at 32 + QUIC_CFG_SIZE.
  */
 LOCAL_FUNCTION libp2p_layout
-    ENTER   0
+    ENTER   0, (QUIC_CFG_SIZE + 16)
     mov     %rdi, %rbx
     mov     %rsi, %rbp
     cmpq    $LIBP2P_CFG_FIXED, LIBP2P_CFG_SIZE(%rbx)
@@ -133,6 +136,16 @@ LOCAL_FUNCTION libp2p_layout
     RANGE   %rcx, 0, 1, 80f
     cmp     %rax, %rcx
     ja      80f
+    mov     LIBP2P_CFG_QUIC(%rbx), %rax     /* QUIC: off, on, or on and accepting */
+    cmp     $(LIBP2P_QUIC_ON | LIBP2P_QUIC_ACCEPT), %rax
+    ja      80f
+    cmp     $LIBP2P_QUIC_ACCEPT, %rax
+    je      80f
+    test    %rax, %rax
+    jz      13f
+    mov     LIBP2P_CFG_QUIC_WINDOW(%rbx), %rax
+    RANGE   %rax, 65536, 0x40000000, 80f
+13:
 
     /* The protocols part. */
     mov     LIBP2P_CFG_PROTOCOLS_COUNT(%rbx), %r9
@@ -232,26 +245,59 @@ LOCAL_FUNCTION libp2p_layout
     mov     LIBP2P_CFG_HEAP_SIZE(%rbx), %rax
     mov     %r12, (ST_HEAP_OFF - ST_TABLES)(%rbp)
     mov     %rax, (ST_HEAP_SIZE - ST_TABLES)(%rbp)
-    lea     (%r12,%rax), %rdx
-    mov     $LIBP2P_OK, %eax
+    add     %rax, %r12
+    mov     %r12, (ST_QMAP_OFF - ST_TABLES)(%rbp)
+    cmpq    $0, LIBP2P_CFG_QUIC(%rbx)
+    jne     4f
+    mov     %r12, (ST_QCMAP_OFF - ST_TABLES)(%rbp)  /* QUIC off: the parts are empty */
+    mov     %r12, (ST_QEV_OFF - ST_TABLES)(%rbp)
+    mov     %r12, (ST_QACT_OFF - ST_TABLES)(%rbp)
+    movq    $0, (ST_QUIC_OFF - ST_TABLES)(%rbp)
+    mov     %r12, %rdx
+    jmp     5f
+4:  mov     LIBP2P_CFG_MAX_STREAMS(%rbx), %rax  /* the asm-quic stream map: u32 each */
+    lea     (%r12,%rax,4), %r12
+    ALIGN8  %r12
+    mov     %r12, (ST_QCMAP_OFF - ST_TABLES)(%rbp)
+    mov     LIBP2P_CFG_MAX_CONNECTIONS(%rbx), %rax
+    lea     (%r12,%rax,4), %r12
+    ALIGN8  %r12
+    mov     %r12, (ST_QEV_OFF - ST_TABLES)(%rbp)
+    add     $(LIBP2P_BL_FIXED + LIBP2P_QUIC_EVENTS), %r12
+    mov     %r12, (ST_QACT_OFF - ST_TABLES)(%rbp)
+    add     $(LIBP2P_BL_FIXED + LIBP2P_QUIC_ACTIONS), %r12
+    add     $63, %r12                       /* the asm-quic state, at a multiple of 64 */
+    and     $-64, %r12
+    mov     %r12, (ST_QUIC_OFF - ST_TABLES)(%rbp)
+    mov     %rbx, %rdi
+    lea     32(%rsp), %rsi
+    call    libp2p_quic_config
+    lea     32(%rsp), %rdi
+    lea     (32 + QUIC_CFG_SIZE)(%rsp), %rsi
+    CALL_GLOBAL quic_state_size
+    test    %rax, %rax
+    jnz     80f
+    mov     (32 + QUIC_CFG_SIZE)(%rsp), %rdx
+    add     %r12, %rdx
+5:  mov     $LIBP2P_OK, %eax
     jmp     99f
 80: mov     $LIBP2P_INVALID_CONFIG, %eax
     xor     %edx, %edx
-99: LEAVE   0
+99: LEAVE   0, (QUIC_CFG_SIZE + 16)
 END_FUNCTION libp2p_layout
 
 /* ---------------------------------------------------------------- libp2p_state_size */
 
 /* libp2p_state_size(config, size) -> status: the bytes of the state for the config. */
 FUNCTION libp2p_state_size
-    ENTER   0, 192
+    ENTER   0, TABLES_ROOM
     mov     %rsi, %rbx
     lea     32(%rsp), %rsi
     call    libp2p_layout
     test    %rax, %rax
     jnz     9f
     mov     %rdx, (%rbx)
-9:  LEAVE   0, 192
+9:  LEAVE   0, TABLES_ROOM
 END_FUNCTION libp2p_state_size
 
 /* ---------------------------------------------------------------- libp2p_init */
@@ -259,13 +305,19 @@ END_FUNCTION libp2p_state_size
 /*
  * libp2p_init(config, state) -> status. Checks the config, the state size
  * and the private key; then builds the state: keys, peer ID, the static
- * Noise key and its signature, empty tables, one free heap block, timers.
+ * Noise key and its signature, empty tables, one free heap block, timers;
+ * with QUIC on, the asm-quic maps and lists, and the asm-quic state with a
+ * seed from the DRBG.
  * rbx config, rbp state, r12 the state size needed, r13 the public key
- * length, X23 the heap offset. Extra: 32(%rsp) the tables, 160(%rsp) the
- * entropy ByteList, 224(%rsp) the public key.
+ * length, X23 the heap offset. Extra: 32(%rsp) the tables (then the
+ * asm-quic Config), 32 + IN_KEY the public key, 32 + IN_BL the entropy
+ * ByteList.
  */
+.set IN_KEY, TABLES_ROOM
+.set IN_BL, IN_KEY + 48
+.set IN_FRAME, IN_BL + 64
 FUNCTION libp2p_init
-    ENTER   0, 256
+    ENTER   0, IN_FRAME
     mov     %rdi, %rbx
     mov     %rsi, %rbp
     mov     %rsi, %r15
@@ -280,7 +332,7 @@ FUNCTION libp2p_init
     cmpq    $LIBP2P_KEY_SECP256K1, LIBP2P_CFG_KEY_TYPE(%rbx)    /* the public key, on the stack first */
     jne     1f
     lea     LIBP2P_CFG_PRIVATE_KEY(%rbx), %rdi
-    lea     224(%rsp), %rsi
+    lea     (32 + IN_KEY)(%rsp), %rsi
     CALL_GLOBAL crypto_secp256k1_public_key
     mov     %rax, %rcx
     mov     $LIBP2P_INVALID_KEY, %eax
@@ -289,7 +341,7 @@ FUNCTION libp2p_init
     mov     $33, %r13d
     jmp     2f
 1:  lea     LIBP2P_CFG_PRIVATE_KEY(%rbx), %rdi
-    lea     224(%rsp), %rsi
+    lea     (32 + IN_KEY)(%rsp), %rsi
     CALL_GLOBAL crypto_ed25519_public_key
     mov     $32, %r13d
 
@@ -302,7 +354,7 @@ FUNCTION libp2p_init
     movq    $LIBP2P_STATE_VERSION, ST_VERSION(%rbp)
     lea     ST_TABLES(%rbp), %rdi
     lea     32(%rsp), %rsi
-    mov     $(ST_DW_OFF - ST_TABLES + 8), %edx
+    mov     $(ST_TABLES_END - ST_TABLES), %edx
     call    libp2p_copy
     lea     ST_CONFIG(%rbp), %rdi
     mov     %rbx, %rsi
@@ -317,14 +369,14 @@ FUNCTION libp2p_init
     mov     LIBP2P_CFG_PROTOCOLS(%rbx), %rsi
     add     %rbx, %rsi
     call    libp2p_copy
-    movq    $56, 160(%rsp)                      /* DRBG key = SHA-256(entropy) */
-    movq    $LIBP2P_BL_FIXED, 168(%rsp)
-    movq    $32, 176(%rsp)
-    lea     184(%rsp), %rdi
+    movq    $56, (32 + IN_BL)(%rsp)             /* DRBG key = SHA-256(entropy) */
+    movq    $LIBP2P_BL_FIXED, (32 + IN_BL + 8)(%rsp)
+    movq    $32, (32 + IN_BL + 16)(%rsp)
+    lea     (32 + IN_BL + 24)(%rsp), %rdi
     lea     LIBP2P_CFG_ENTROPY(%rbx), %rsi
     mov     $32, %edx
     call    libp2p_copy
-    lea     160(%rsp), %rdi
+    lea     (32 + IN_BL)(%rsp), %rdi
     lea     ST_DRBG_KEY(%rbp), %rsi
     CALL_GLOBAL crypto_sha256
     mov     LIBP2P_CFG_KEY_TYPE(%rbx), %rax
@@ -334,7 +386,7 @@ FUNCTION libp2p_init
     mov     $32, %edx
     call    libp2p_copy
     lea     ST_PUBLIC_KEY(%rbp), %rdi
-    lea     224(%rsp), %rsi
+    lea     (32 + IN_KEY)(%rsp), %rsi
     mov     %r13, %rdx
     call    libp2p_copy
     mov     %r13, ST_PUBLIC_LEN(%rbp)
@@ -380,8 +432,43 @@ FUNCTION libp2p_init
     mov     (ST_CONFIG + LIBP2P_CFG_DECAY_INTERVAL_MS)(%rbp), %rcx
     add     %rax, %rcx
     mov     %rcx, ST_DECAY_AT(%rbp)
-    mov     $LIBP2P_OK, %eax
-99: LEAVE   0, 256
+    cmpq    $0, ST_QUIC_OFF(%rbp)               /* QUIC: maps, lists, the asm-quic state */
+    je      6f
+    mov     ST_QMAP_OFF(%rbp), %rax
+    add     %rbp, %rax
+    mov     ST_QEV_OFF(%rbp), %rcx
+    add     %rbp, %rcx
+5:  cmp     %rcx, %rax
+    jae     51f
+    movq    $NONE, (%rax)
+    add     $8, %rax
+    jmp     5b
+51: mov     ST_QEV_OFF(%rbp), %rax
+    add     %rbp, %rax
+    movq    $(LIBP2P_BL_FIXED + LIBP2P_QUIC_EVENTS), LIBP2P_BL_SIZE(%rax)
+    movq    $LIBP2P_BL_FIXED, LIBP2P_BL_OFFSET(%rax)
+    movq    $0, LIBP2P_BL_COUNT(%rax)
+    mov     ST_QACT_OFF(%rbp), %rax
+    add     %rbp, %rax
+    movq    $(LIBP2P_BL_FIXED + LIBP2P_QUIC_ACTIONS), LIBP2P_BL_SIZE(%rax)
+    movq    $LIBP2P_BL_FIXED, LIBP2P_BL_OFFSET(%rax)
+    movq    $0, LIBP2P_BL_COUNT(%rax)
+    mov     ST_QUIC_OFF(%rbp), %rax
+    mov     %r12, %rcx
+    sub     %rax, %rcx
+    mov     %rcx, (%rbp,%rax)                   /* the size of the asm-quic state */
+    mov     %rbx, %rdi
+    lea     32(%rsp), %rsi
+    call    libp2p_quic_config
+    lea     (32 + QUIC_CFG_SEED)(%rsp), %rdi
+    mov     $32, %esi
+    call    libp2p_random
+    lea     32(%rsp), %rdi
+    mov     ST_QUIC_OFF(%rbp), %rsi
+    add     %rbp, %rsi
+    CALL_GLOBAL quic_init
+6:  mov     $LIBP2P_OK, %eax
+99: LEAVE   0, IN_FRAME
 END_FUNCTION libp2p_init
 
 /* ---------------------------------------------------------------- Event checks */
@@ -427,7 +514,13 @@ LOCAL_FUNCTION libp2p_check_event
     jne     3f
     mov     LIBP2P_EV_DIAL_ID_LEN(%rbx), %rax
     RANGE   %rax, 0, LIBP2P_MAX_PEER_ID, 80f
-    lea     LIBP2P_EV_DIAL_ADDR(%rbx), %rdi
+    mov     LIBP2P_EV_DIAL_TRANSPORT(%rbx), %rax
+    cmp     $LIBP2P_QUIC, %rax
+    ja      80f
+    jne     21f
+    cmpq    $0, ST_QUIC_OFF(%r15)           /* QUIC needs QUIC on */
+    je      80f
+21: lea     LIBP2P_EV_DIAL_ADDR(%rbx), %rdi
     call    libp2p_check_addr
     jmp     99f
 3:  cmp     $LIBP2P_EVENT_OPEN_STREAM, %r12
@@ -549,7 +642,7 @@ LOCAL_FUNCTION libp2p_check_event
     ja      80f
     jmp     70f
 13: cmp     $LIBP2P_EVENT_PARTIAL_SCORE, %r12
-    jne     70f
+    jne     14f
     mov     LIBP2P_EV_PSCORE_RESULT(%rbx), %rax
     RANGE   %rax, 1, 2, 80f
     mov     LIBP2P_EV_PSCORE_TOPIC_LEN(%rbx), %rax
@@ -557,6 +650,20 @@ LOCAL_FUNCTION libp2p_check_event
     lea     -LIBP2P_EV_PSCORE_TOPIC(%rbp), %rcx
     cmp     %rcx, %rax
     ja      80f
+    jmp     70f
+14: cmp     $LIBP2P_EVENT_DATAGRAM, %r12
+    jne     70f
+    cmpq    $0, ST_QUIC_OFF(%r15)           /* QUIC on */
+    je      80f
+    RANGE   %rbp, LIBP2P_EV_DG_DATA, (LIBP2P_EV_DG_DATA + LIBP2P_DATAGRAM_MAX + 1), 80f
+    mov     LIBP2P_EV_DG_COUNT(%rbx), %rax
+    RANGE   %rax, 0, LIBP2P_DATAGRAM_MAX, 80f
+    lea     -LIBP2P_EV_DG_DATA(%rbp), %rcx
+    cmp     %rcx, %rax
+    ja      80f
+    lea     LIBP2P_EV_DG_ADDR(%rbx), %rdi
+    call    libp2p_check_addr
+    jmp     99f
 70: xor     %eax, %eax
     jmp     99f
 80: mov     $1, %eax
@@ -571,7 +678,7 @@ END_FUNCTION libp2p_check_event
     .short  LIBP2P_EV_STREAM_DATA, LIBP2P_EV_STREAM_SIZE, LIBP2P_EV_STREAM_SIZE, LIBP2P_EV_TOPIC
     .short  LIBP2P_EV_TOPIC, LIBP2P_EV_PUB_TOPIC, LIBP2P_EV_MSG_ID_SIZE, LIBP2P_EV_VALIDATION_SIZE
     .short  LIBP2P_EV_SCORE_SIZE, LIBP2P_EV_TP_TOPIC, LIBP2P_EV_PS_TOPIC, LIBP2P_EV_PP_TOPIC
-    .short  LIBP2P_EV_PSEND_BYTES, LIBP2P_EV_PSCORE_TOPIC
+    .short  LIBP2P_EV_PSEND_BYTES, LIBP2P_EV_PSCORE_TOPIC, LIBP2P_EV_DG_DATA
     .p2align 2
 
 /* libp2p_check_addr(addr) -> 0 when the family is 4 or 6 and the port below 65536, else 1. A leaf. */
@@ -594,12 +701,25 @@ END_FUNCTION libp2p_check_addr
  * libp2p_event_room(event) -> the action bytes handling the event may need:
  * 64 + 16 for each received byte, 16384 for an event that can end a
  * connection, LIBP2P_ACT_PL_TOPIC + LIBP2P_MAX_TOPIC + 16 for each peer
- * slot for PARTIAL_PEERS, else 1024. A leaf.
+ * slot for PARTIAL_PEERS, 0 for DATAGRAM (all ones when the event list for
+ * asm-quic has no room for it), else 1024. A leaf.
  */
 LOCAL_FUNCTION libp2p_event_room
     UNWIND_END_PROLOGUE
     mov     LIBP2P_EV_KIND(%rdi), %rcx
-    cmp     $LIBP2P_EVENT_RECEIVED, %rcx
+    cmp     $LIBP2P_EVENT_DATAGRAM, %rcx
+    jne     7f
+    mov     ST_QEV_OFF(%r15), %rdx
+    add     %r15, %rdx
+    mov     LIBP2P_BL_SIZE(%rdx), %rsi
+    sub     $LIBP2P_BL_FIXED, %rsi
+    sub     LIBP2P_BL_COUNT(%rdx), %rsi
+    xor     %eax, %eax
+    mov     $-1, %rcx
+    cmp     LIBP2P_EV_SIZE(%rdi), %rsi
+    cmovb   %rcx, %rax
+    ret
+7:  cmp     $LIBP2P_EVENT_RECEIVED, %rcx
     jne     1f
     mov     LIBP2P_EV_COUNT(%rdi), %rax
     shl     $4, %rax
@@ -686,6 +806,18 @@ FUNCTION libp2p_step
     lea     LIBP2P_TICK_ENTROPY(%rbx), %rdi
     call    libp2p_reseed
     call    libp2p_free_kept
+    cmpq    $0, ST_QUIC_OFF(%r15)           /* QUIC: the tick of asm-quic, then the actions it gave */
+    je      21f
+    SCR     %rdi, SC_QTICK
+    mov     LIBP2P_TICK_US(%rbx), %rax
+    mov     %rax, QUIC_TICK_NOW(%rdi)
+    mov     LIBP2P_TICK_UNIX(%rbx), %rax
+    mov     %rax, QUIC_TICK_UNIX(%rdi)
+    add     $QUIC_TICK_ENTROPY, %rdi
+    mov     $32, %esi
+    call    libp2p_random
+    call    libp2p_quic_actions
+21:
 
     /* The events, while their room lasts. */
     mov     LIBP2P_BL_OFFSET(%rbp), %rax
@@ -714,7 +846,10 @@ FUNCTION libp2p_step
 5:  mov     X25(%rsp), %rax
     mov     %rax, LIBP2P_RESULT_ACCEPTED(%r13)
     call    libp2p_timers
-    call    libp2p_drain
+    cmpq    $0, ST_QUIC_OFF(%r15)
+    je      51f
+    call    libp2p_quic_pump
+51: call    libp2p_drain
     movq    $0, SC_RESERVE(%r14)
     mov     $LIBP2P_ACTION_WAKEUP, %edi
     mov     $LIBP2P_ACT_WAKEUP_SIZE, %esi
@@ -818,8 +953,12 @@ LOCAL_FUNCTION libp2p_event
     call    libp2p_on_partial_send
     jmp     99f
 22: cmp     $23, %rax
-    jne     99f
+    jne     23f
     call    libp2p_on_partial_score
+    jmp     99f
+23: cmp     $24, %rax
+    jne     99f
+    call    libp2p_on_datagram
 99: UNFRAME
 END_FUNCTION libp2p_event
 
@@ -841,7 +980,7 @@ END_FUNCTION libp2p_free_kept
 /* ---------------------------------------------------------------- Timers */
 
 /*
- * libp2p_timers(): ends connections whose upgrade ran out of time, runs the
+ * libp2p_timers(): ends TCP connections whose upgrade ran out of time, runs the
  * gossipsub heartbeat and score decay when due, and asks for a wakeup at
  * the next deadline.
  * rbx connection, rbp connections left, r12 now.
@@ -853,6 +992,8 @@ LOCAL_FUNCTION libp2p_timers
     mov     ST_CONN_COUNT(%r15), %rbp
 1:  test    %rbp, %rbp
     jz      3f
+    testq   $CF_QUIC, C_FLAGS(%rbx)         /* asm-quic times QUIC handshakes */
+    jnz     2f
     movl    C_PHASE(%rbx), %eax
     cmp     $PH_DIALING, %eax
     jb      2f

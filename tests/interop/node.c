@@ -1,12 +1,13 @@
 /*
  * The asm-libp2p node of libp2p/test-plans transport-interop.
  *
- * Environment: transport (tcp), muxer (yamux or mplex), security (noise),
- * is_dialer, ip, redis_addr (default redis:6379), test_timeout_seconds.
- * The listener publishes /ip4/<ip>/tcp/<port>/p2p/<id> with RPUSH
- * listenerAddr; the dialer takes it with BLPOP, connects, pings with
- * /ipfs/ping/1.0.0 (32 random bytes, echoed) and prints the JSON result.
- * Logs go to stderr; only the result goes to stdout.
+ * Environment: transport (tcp or quic-v1), muxer (yamux or mplex) and
+ * security (noise) for tcp, is_dialer, ip, redis_addr (default redis:6379),
+ * test_timeout_seconds. The listener publishes /ip4/<ip>/tcp/<port>/p2p/<id>,
+ * or /ip4/<ip>/udp/<port>/quic-v1/p2p/<id>, with RPUSH listenerAddr; the
+ * dialer takes it with BLPOP, connects, pings with /ipfs/ping/1.0.0 (32
+ * random bytes, echoed) and prints the JSON result. Logs go to stderr; only
+ * the result goes to stdout.
  *
  * The library does the protocols and its shell the sockets; this file does
  * Redis and the ping protocol, which consensus clients do not use.
@@ -181,6 +182,9 @@ static uint8_t ping_bytes[32];
 static uint64_t ping_stream;
 static int done;
 static int gossip_mode;
+static int quic;                                /* transport quic-v1 */
+static uint64_t udp_socket;                     /* its socket ID */
+static int quic_port;                           /* the listener's UDP port */
 static const char *gs_name;
 static int gs_got;
 #define GS_TOPIC "/eth2/00000000/beacon_block/ssz_snappy"
@@ -333,7 +337,14 @@ static void poll_once(int timeout_ms) {
 static void parse_multiaddr(const char *m, ev_dial *d) {
     char ip[64], id[128];
     int port;
-    if (sscanf(m, "/ip4/%63[^/]/tcp/%d/p2p/%127s", ip, &port, id) != 3) die("cannot parse address %s", m);
+    if (sscanf(m, "/ip4/%63[^/]/tcp/%d/p2p/%127s", ip, &port, id) == 3) {
+        d->transport = LIBP2P_TCP;
+    } else if (sscanf(m, "/ip4/%63[^/]/udp/%d/quic-v1/p2p/%127s", ip, &port, id) == 3) {
+        d->transport = LIBP2P_QUIC;
+        d->socket = udp_socket;
+    } else {
+        die("cannot parse address %s", m);
+    }
     d->addr.family = 4;
     d->addr.port = (uint64_t)port;
     if (inet_pton(AF_INET, ip, d->addr.ip) != 1) die("bad ip %s", ip);
@@ -355,9 +366,14 @@ int main(void) {
         dialer = getenv("LISTEN") && !strcmp(getenv("LISTEN"), "1") ? "false" : "true";
         if (!getenv("redis_addr")) redis = getenv("REDIS");
     }
-    if (!transport || strcmp(transport, "tcp")) die("transport %s is not supported", transport ? transport : "(none)");
-    if (!security || strcmp(security, "noise")) die("security %s is not supported", security ? security : "(none)");
-    if (!muxer || (strcmp(muxer, "yamux") && strcmp(muxer, "mplex"))) die("muxer %s is not supported", muxer ? muxer : "(none)");
+    quic = transport && !strcmp(transport, "quic-v1");
+    if (quic) {
+        muxer = "yamux";                    /* QUIC has its own security and streams */
+    } else {
+        if (!transport || strcmp(transport, "tcp")) die("transport %s is not supported", transport ? transport : "(none)");
+        if (!security || strcmp(security, "noise")) die("security %s is not supported", security ? security : "(none)");
+        if (!muxer || (strcmp(muxer, "yamux") && strcmp(muxer, "mplex"))) die("muxer %s is not supported", muxer ? muxer : "(none)");
+    }
     is_dialer = dialer && !strcmp(dialer, "true");
     if (!ip) ip = "0.0.0.0";
     if (!redis) redis = "redis:6379";
@@ -391,6 +407,12 @@ int main(void) {
     c->gossipsub_v12 = 1;                   /* gossipsub v1.2, with the IDONTWANT defaults of go-libp2p-pubsub */
     c->idontwant_threshold = 1024; c->dontwant_slots = 64; c->dontwant_ttl = 3;
     c->max_idontwant_messages = 1000; c->max_idontwant_length = 10;
+    if (quic) {                             /* QUIC on; the listener takes inbound connections */
+        c->quic = LIBP2P_QUIC_ON | (is_dialer ? 0 : LIBP2P_QUIC_ACCEPT);
+        c->quic_heap = 1 << 24; c->quic_idle_ms = 30000; c->quic_keep_alive_ms = 15000;
+        c->quic_max_data = 1 << 22; c->quic_stream_data = 1 << 20; c->quic_max_streams = 64;
+        c->quic_sent = 512; c->quic_window = 1 << 20;
+    }
 
     uint64_t size = 0;
     if (libp2p_state_size(&cfg, &size)) die("libp2p_state_size");
@@ -416,24 +438,37 @@ int main(void) {
     uint64_t peer_id_len = ((uint64_t *)state)[19];   /* ST_PEER_ID_LEN at 152 */
     char id58[128];
     b58_encode(peer_id, peer_id_len, id58);
-    logf_("peer id %s, muxer %s, %s", id58, muxer, is_dialer ? "dialer" : "listener");
+    logf_("peer id %s, %s %s, %s", id58, quic ? "transport" : "muxer", quic ? "quic-v1" : muxer,
+          is_dialer ? "dialer" : "listener");
 
     int rfd = tcp_connect_host(redis);
     char reply[2048];
     uint64_t deadline = now_ms() + (uint64_t)timeout * 1000;
 
+    if (quic) {                             /* the UDP socket: the listener's address, or any port to dial from */
+        libp2p_addr ua = {4, 0, {0}};
+        if (inet_pton(AF_INET, is_dialer ? "0.0.0.0" : ip, ua.ip) != 1) die("bad ip %s", ip);
+        libp2p_bind_result br;
+        if (libp2p_shell_bind(shell, &ua, &br) || br.error) die("bind: %s", strerror((int)br.error));
+        udp_socket = br.socket;
+        if (!is_dialer) quic_port = (int)br.addr.port;
+    }
     if (!is_dialer) {
-        libp2p_addr la = {4, 0, {0}};
-        if (inet_pton(AF_INET, ip, la.ip) != 1) die("bad ip %s", ip);
-        libp2p_listen_result lr;
-        if (libp2p_shell_listen(shell, &la, &lr) || lr.error) die("listen: %s", strerror((int)lr.error));
-        int port = (int)lr.addr.port;
+        int port = quic_port;
+        if (!quic) {
+            libp2p_addr la = {4, 0, {0}};
+            if (inet_pton(AF_INET, ip, la.ip) != 1) die("bad ip %s", ip);
+            libp2p_listen_result lr;
+            if (libp2p_shell_listen(shell, &la, &lr) || lr.error) die("listen: %s", strerror((int)lr.error));
+            port = (int)lr.addr.port;
+        }
         struct sockaddr_in me;
         socklen_t ml = sizeof me;
         getsockname(rfd, (struct sockaddr *)&me, &ml);   /* the address the dialer can reach */
         char ipbuf[64], maddr[256];
         inet_ntop(AF_INET, &me.sin_addr, ipbuf, sizeof ipbuf);
-        snprintf(maddr, sizeof maddr, "/ip4/%s/tcp/%d/p2p/%s", ipbuf, port, id58);
+        if (quic) snprintf(maddr, sizeof maddr, "/ip4/%s/udp/%d/quic-v1/p2p/%s", ipbuf, port, id58);
+        else snprintf(maddr, sizeof maddr, "/ip4/%s/tcp/%d/p2p/%s", ipbuf, port, id58);
         logf_("listening on %s", maddr);
         char key[80];
         snprintf(key, sizeof key, gossip_mode ? "addr-%s" : "listenerAddr", gs_name);
@@ -511,9 +546,9 @@ int main(void) {
         printf("%s TOTAL %d\n", gs_name, gs_got);
         if (getenv("TRACE")) {          /* debug: the stream table (offsets of include/state.inc) */
             uint8_t *st = state;
-            uint64_t off = *(uint64_t *)(st + 1176), cnt = *(uint64_t *)(st + 1184);
+            uint64_t off = *(uint64_t *)(st + 1312), cnt = *(uint64_t *)(st + 1320);
             for (uint64_t i = 0; i < cnt; i++) {
-                uint8_t *sl = st + off + i * 360;
+                uint8_t *sl = st + off + i * 368;
                 if (!*(uint32_t *)(sl + 4)) continue;
                 fprintf(stderr, "stream %llu: id %llu flags %llx kind %llu ms_len %llu rpc_len %llu got %llu q %llu sendwin %llu\n",
                         (unsigned long long)i, (unsigned long long)*(uint64_t *)(sl + 16), (unsigned long long)*(uint64_t *)(sl + 24),

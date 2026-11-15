@@ -8,7 +8,8 @@
  * and reads the same bytes back (A echoes, then closes). A publishes one
  * message; B gets it, gives its ID and accepts it. B disconnects; both see
  * the peer go. Round 1 uses yamux (A Ed25519, B secp256k1); round 2 mplex
- * (A secp256k1, B Ed25519). Exit 0 when both rounds pass, after a
+ * (A secp256k1, B Ed25519); round 3 QUIC over 127.0.0.1 UDP sockets (A
+ * Ed25519, B secp256k1). Exit 0 when the three rounds pass, after a
  * "FUNCTION <name> PASS" line for each shell function, for the tick tables.
  * A failure prints FAIL and exits 1 at once.
  */
@@ -92,7 +93,7 @@ static void write_stream(node *n, uint64_t stream, const uint8_t *data, uint64_t
     memcpy(w->data, data, len);
 }
 
-static void make_node(node *n, const char *name, uint64_t key_type, uint64_t muxers) {
+static void make_node(node *n, const char *name, uint64_t key_type, uint64_t muxers, int quic) {
     struct { libp2p_config c; libp2p_proto p[1]; } cfg;
     libp2p_config *c = &cfg.c;
     memset(n, 0, sizeof *n);
@@ -119,6 +120,11 @@ static void make_node(node *n, const char *name, uint64_t key_type, uint64_t mux
         c->retransmission = 3; c->opportunistic_ticks = 60; c->opportunistic_peers = 2;
         c->gossipsub_v12 = 1; c->idontwant_threshold = 1024; c->dontwant_slots = 64; c->dontwant_ttl = 3;
         c->max_idontwant_messages = 1000; c->max_idontwant_length = 10;
+        if (quic) {
+            c->quic = LIBP2P_QUIC_ON | LIBP2P_QUIC_ACCEPT; c->quic_heap = 1 << 23; c->quic_idle_ms = 30000;
+            c->quic_keep_alive_ms = 10000; c->quic_max_data = 1 << 22; c->quic_stream_data = 1 << 20;
+            c->quic_max_streams = 64; c->quic_sent = 256; c->quic_window = 1 << 18;
+        }
         uint64_t size = 0;
         if (libp2p_state_size(&cfg, &size)) fail("libp2p_state_size");
         free(n->state);
@@ -265,19 +271,29 @@ static void step(node *n) {
     handle_actions(n);
 }
 
-static void round_(int number, uint64_t muxers, uint64_t key_a, uint64_t key_b) {
-    make_node(&na, "A", key_a, muxers);
-    make_node(&nb, "B", key_b, muxers);
+static void round_(int number, uint64_t muxers, uint64_t key_a, uint64_t key_b, int quic) {
+    make_node(&na, "A", key_a, muxers, quic);
+    make_node(&nb, "B", key_b, muxers, quic);
     echo_got = 0; echo_stream = 0; echo_eof = 0; published = 0; got_message = 0; accepted = 0; disconnect_sent = 0;
     for (uint64_t i = 0; i < ECHO_LEN; i++) echo_out[i] = (uint8_t)(i * 31 + (i >> 9) + 7);
 
     libp2p_addr la = {4, 0, {127, 0, 0, 1}};
-    libp2p_listen_result lr;
-    if (libp2p_shell_listen(na.shell, &la, &lr) || lr.error) fail("listen");
     ev_dial *d = ev_add(&nb, EV_DIAL, sizeof *d);
     d->tag = 1;
     d->addr = la;
-    d->addr.port = lr.addr.port;
+    if (quic) {                                     /* A and B each bind a UDP socket; B dials from its own */
+        libp2p_bind_result ba, bb;
+        if (libp2p_shell_bind(na.shell, &la, &ba) || ba.error) fail("bind A");
+        if (libp2p_shell_bind(nb.shell, &la, &bb) || bb.error) fail("bind B");
+        if (ba.addr.family != 4 || !ba.addr.port || ba.socket != 0 || bb.socket != 0) fail("bind result");
+        d->addr.port = ba.addr.port;
+        d->transport = LIBP2P_QUIC;
+        d->socket = bb.socket;
+    } else {
+        libp2p_listen_result lr;
+        if (libp2p_shell_listen(na.shell, &la, &lr) || lr.error) fail("listen");
+        d->addr.port = lr.addr.port;
+    }
     d->id_len = ((uint64_t *)na.state)[ST_PEER_ID_LEN / 8];
     memcpy(d->id, (uint8_t *)na.state + ST_PEER_ID, d->id_len);
 
@@ -305,7 +321,7 @@ static void round_(int number, uint64_t muxers, uint64_t key_a, uint64_t key_b) 
         if (((uint64_t *)nb.ev)[2] == 0 && libp2p_shell_wait(nb.shell, &t, nb.ev)) fail("libp2p_shell_wait");
     }
     printf("PASS round %d (%s): echo %d bytes, message delivered, disconnected\n", number,
-           muxers == 1 ? "yamux" : "mplex", ECHO_LEN);
+           quic ? "QUIC" : muxers == 1 ? "yamux" : "mplex", ECHO_LEN);
     free_node(&na);
     free_node(&nb);
 }
@@ -314,12 +330,13 @@ int main(void) {
     echo_out = malloc(ECHO_LEN);
     echo_in = malloc(ECHO_LEN);
     if (!echo_out || !echo_in) fail("memory");
-    round_(1, 1, LIBP2P_KEY_ED25519, LIBP2P_KEY_SECP256K1);
-    round_(2, 2, LIBP2P_KEY_SECP256K1, LIBP2P_KEY_ED25519);
+    round_(1, 1, LIBP2P_KEY_ED25519, LIBP2P_KEY_SECP256K1, 0);
+    round_(2, 2, LIBP2P_KEY_SECP256K1, LIBP2P_KEY_ED25519, 0);
+    round_(3, 3, LIBP2P_KEY_ED25519, LIBP2P_KEY_SECP256K1, 1);
     static const char *const shell[] = {"libp2p_shell_size", "libp2p_shell_init", "libp2p_shell_listen",
-                                        "libp2p_shell_perform", "libp2p_shell_wait", "libp2p_shell_close",
-                                        "libp2p_shell_clock"};
+                                        "libp2p_shell_bind", "libp2p_shell_perform", "libp2p_shell_wait",
+                                        "libp2p_shell_close", "libp2p_shell_clock"};
     for (size_t i = 0; i < sizeof shell / sizeof shell[0]; i++) printf("FUNCTION %s PASS\n", shell[i]);
-    printf("2 rounds, 0 failures\n");
+    printf("3 rounds, 0 failures\n");
     return 0;
 }

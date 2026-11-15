@@ -319,8 +319,9 @@ END_FUNCTION libp2p_stream_ms_proto
 
 /*
  * libp2p_stream_open(conn, target, tag, proposals, count) -> a new outbound
- * stream that proposes the protocols: its ID is the next of this side, it
- * will send SYN or NewStream, and the multistream header and the first
+ * stream that proposes the protocols: its ID is the next of this side (for
+ * QUIC, 0 until asm-quic opens it), it will send SYN, NewStream or the
+ * asm-quic OPEN_STREAM, and the multistream header and the first
  * proposal are queued. proposals is a heap block of ProtocolEntry values
  * the stream now owns, or 0 for gossipsub. 0 when it cannot be opened.
  */
@@ -331,15 +332,18 @@ LOCAL_FUNCTION libp2p_stream_open
     mov     x21, x2
     mov     x22, x3
     mov     x23, x4
-    ldr     x1, [x19, #C_MX_NEXT_ID]
     ldr     x9, [x19, #C_FLAGS]
+    mov     x1, #0                          /* QUIC: the ID comes with STREAM_OPENED */
+    tst     x9, #CF_QUIC
+    b.ne    1f
+    ldr     x1, [x19, #C_MX_NEXT_ID]
     tst     x9, #CF_YAMUX
     mov     x10, #1
     mov     x11, #2
     csel    x10, x11, x10, ne
     add     x9, x1, x10
     str     x9, [x19, #C_MX_NEXT_ID]
-    mov     x2, #1
+1:  mov     x2, #1
     bl      libp2p_stream_new
     cbz     x0, 8f
     mov     x24, x0
@@ -959,12 +963,14 @@ LOCAL_FUNCTION libp2p_stream_append
 END_FUNCTION libp2p_stream_append
 
 /*
- * libp2p_observed(dst, addr) -> the length of the binary multiaddr of the
- * address: /ip4 (code 4, 4 bytes) or /ip6 (code 41, 16 bytes), then /tcp
- * (code 6, the port big endian). A leaf.
+ * libp2p_observed(dst, addr, quic) -> the length of the binary multiaddr of
+ * the address: /ip4 (code 4, 4 bytes) or /ip6 (code 41, 16 bytes), then
+ * /tcp (code 6, the port big endian), or with quic nonzero /udp (code 273,
+ * the port big endian) and /quic-v1 (code 0x01cc). A leaf.
  */
 LOCAL_FUNCTION libp2p_observed
     UNWIND_END_PROLOGUE
+    mov     x6, x2
     mov     x2, x0
     ldr     x3, [x1, #LIBP2P_ADDR_FAMILY]
     cmp     x3, #6
@@ -978,13 +984,24 @@ LOCAL_FUNCTION libp2p_observed
     strb    w4, [x2], #1
     ldp     x4, x5, [x1, #LIBP2P_ADDR_IP]
     stp     x4, x5, [x2], #16
-2:  mov     w4, #6
+2:  cbnz    x6, 3f
+    mov     w4, #6
     strb    w4, [x2], #1
-    ldr     x4, [x1, #LIBP2P_ADDR_PORT]
+    b       4f
+3:  mov     w4, #0x91                       /* 273 as a varint */
+    strb    w4, [x2], #1
+    mov     w4, #0x02
+    strb    w4, [x2], #1
+4:  ldr     x4, [x1, #LIBP2P_ADDR_PORT]
     lsr     x5, x4, #8
     strb    w5, [x2], #1
     strb    w4, [x2], #1
-    sub     x0, x2, x0
+    cbz     x6, 5f
+    mov     w4, #0xcc                       /* 0x01cc as a varint */
+    strb    w4, [x2], #1
+    mov     w4, #0x03
+    strb    w4, [x2], #1
+5:  sub     x0, x2, x0
     ret
 END_FUNCTION libp2p_observed
 
@@ -1009,6 +1026,8 @@ LOCAL_FUNCTION libp2p_identify
     sub     x21, x0, x9
     mov     x0, x19
     bl      libp2p_stream_conn
+    ldr     x2, [x0, #C_FLAGS]
+    and     x2, x2, #CF_QUIC
     add     x1, x0, #C_ADDR
     add     x0, sp, #48
     bl      libp2p_observed

@@ -1,6 +1,6 @@
 # Test runner
 
-`runner.c` runs the scenarios: nodes in memory, with the runner as their shell. It carries the bytes of each connection to the other node, and answers DIAL, ADOPT, REFUSE, SEND and CLOSE as a socket layer would. Keys, entropy and time are fixed, so every scenario is deterministic. It is test code in C; the library itself is pure assembly.
+`runner.c` runs the scenarios: nodes in memory, with the runner as their shell. It carries the bytes of each connection to the other node, and answers DIAL, ADOPT, REFUSE, SEND and CLOSE as a socket layer would. It carries each SEND_DATAGRAM to the node of its UDP address (node i is 10.0.0.(i + 1), port 7000 + i), and may drop every n-th. Keys, entropy and time are fixed, so every scenario is deterministic. It is test code in C; the library itself is pure assembly.
 
 ```bash
 tests/runner/docker.sh
@@ -26,14 +26,14 @@ Name scenarios to run only those, for example `build/linux-arm64/runner gossip s
 
 | Scenario | What it checks |
 |---|---|
-| config | Each out-of-range config field gives `LIBP2P_INVALID_CONFIG`; a short state gives `LIBP2P_BUFFER_TOO_SMALL`; a secp256k1 key of 0 or above the order gives `LIBP2P_INVALID_KEY`. |
+| config | Each out-of-range config field gives `LIBP2P_INVALID_CONFIG`, the QUIC fields included; a short state gives `LIBP2P_BUFFER_TOO_SMALL`; a secp256k1 key of 0 or above the order gives `LIBP2P_INVALID_KEY`. |
 | yamux, mplex, fallback, mplex_first | Node 0 dials node 1 with each muxer choice: both yamux; both mplex; node 0 offers both and node 1 only mplex; node 0 offers only mplex and node 1 both. Ed25519 and secp256k1 keys in turn. A stream opens with its second protocol, carries a message each way, and closes both ways with no STREAM_RESET; then the peers disconnect. |
 | no_muxer | No shared muxer: the dial fails in the upgrade, and no node reports a peer. |
 | peer_id | A dial that reaches another peer than it names fails with PEER_ID, and no node reports a peer. |
 | streams_yamux, streams_mplex | Refused protocols, a reset, and 1 MiB from one node to the other through the flow control of each muxer. |
 | timeout | An unanswered dial fails with CONNECT; a peer that never answers fails with HANDSHAKE. |
 | garbage | Garbage bytes at a listener and at a dialer close the connection. |
-| errors | Malformed events and short buffers give their status, accept nothing, and leave the state unchanged. |
+| errors | Malformed events and short buffers give their status, accept nothing, and leave the state unchanged. Over QUIC: a QUIC DIAL with QUIC off, an unknown transport, a bad port, a DATAGRAM with QUIC off, a count past its event, a bad address family, and a count above 65535. |
 | simultaneous | Both nodes dial each other at once: one connection stays, and each side sees one peer. |
 | limits | A node with room for 2 connections refuses the third. |
 | gossip | Six nodes in a graph: every message reaches every node once; a rejecting node does not forward. |
@@ -41,6 +41,12 @@ Name scenarios to run only those, for example `build/linux-arm64/runner gossip s
 | secondary | A peer that dials again gets a secondary connection; when its first connection ends, the second takes over with no PEER_DISCONNECTED, and gossip and new streams work through it. |
 | scoring | Rejected messages and a low application score put a peer below the thresholds: its messages are not heard, and messages no longer go to it. |
 | idontwant | Four nodes, each connected to the others, publish messages of 2048 bytes three times: with gossipsub v1.2, without IDONTWANT, and with one node of v1.1 only. Every node gets each message once, and there are fewer duplicates with IDONTWANT than without. |
+| quic | The checks of yamux over QUIC: Ed25519 keys on both nodes, then secp256k1 and Ed25519. |
+| quic_streams | The checks of streams_yamux over QUIC: 1 MiB goes through the window of `quic_window` bytes in flight, which STREAM_ACKED opens again. |
+| quic_loss | quic_streams with every 7th datagram lost: the connection, the streams and 1 MiB still go through. |
+| quic_dial_fails | A QUIC dial that reaches another peer than it names fails with PEER_ID; a node that never answers fails with CONNECT. |
+| quic_gossip | The checks of gossip with every edge over QUIC. |
+| quic_mixed | The checks of gossip with every other edge over QUIC and the rest over TCP. |
 | partial | Gossipsub v1.3 and the Partial Messages extension. One node dials three: two want partial messages of a topic, one only sends them, one speaks v1.2 only. PARTIAL_PEERS lists the partial peers with their flags and not the v1.2 node; PARTIAL_SEND gives data and metadata to a peer that wants partial messages, the metadata only to a peer that only sends them, and nothing to the v1.2 node; each PARTIAL carries the flags of its sender; full messages of the topic go to every peer but the one that wants partial messages, and a large one gets no IDONTWANT to the partial peers; on a topic the node does not subscribe to, PARTIAL_PEERS lists the fanout peer that wants partial messages; new partial flags and an unsubscription change the list; PARTIAL_SUBSCRIBE with flags is an invalid event on a node without the extension. Then a node with D 1 and two partial peers lists the one outside its mesh in PARTIAL_GOSSIP. |
 
 ## Transcript digests

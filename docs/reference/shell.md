@@ -7,6 +7,7 @@
 - [`libp2p_shell_size`](#function-libp2p_shell_size): gives the bytes of a shell context.
 - [`libp2p_shell_init`](#function-libp2p_shell_init): builds a shell context.
 - [`libp2p_shell_listen`](#function-libp2p_shell_listen): opens a listening socket.
+- [`libp2p_shell_bind`](#function-libp2p_shell_bind): opens a bound UDP socket.
 - [`libp2p_shell_perform`](#function-libp2p_shell_perform): performs the shell actions of a step.
 - [`libp2p_shell_wait`](#function-libp2p_shell_wait): waits for socket activity.
 - [`libp2p_shell_close`](#function-libp2p_shell_close): closes every socket.
@@ -33,6 +34,9 @@
 - [`libp2p_shell_wsa_end`](#function-libp2p_shell_wsa_end): stops Winsock.
 - [`libp2p_shell_nonblock`](#function-libp2p_shell_nonblock): makes a socket non-blocking.
 - [`libp2p_shell_poll`](#function-libp2p_shell_poll): waits with WSAPoll.
+- [`libp2p_shell_udp_read`](#function-libp2p_shell_udp_read): reads the datagrams of a UDP socket.
+- [`libp2p_shell_udp_socket`](#function-libp2p_shell_udp_socket): opens a non-blocking UDP socket.
+- [`libp2p_shell_no_connreset`](#function-libp2p_shell_no_connreset): turns off WSAECONNRESET on a UDP socket.
 
 ### Types
 
@@ -40,17 +44,21 @@
 - [`ShellContext`](#type-shellcontext): the sockets of the shell.
 - [`ShellEntry`](#type-shellentry): the socket of one connection.
 - [`ListenResult`](#type-listenresult): the outcome of `libp2p_shell_listen`.
+- [`BindResult`](#type-bindresult): the outcome of `libp2p_shell_bind`.
 
 ### Constants
 
 - `LIBP2P_OS_ERROR`: status 8: an OS call failed.
 - `LIBP2P_SHELL_ACCEPTING`: accepted sockets that may wait for ADOPT.
 - `LIBP2P_RECEIVE_MAX`: bytes of one RECEIVED event.
+- `LIBP2P_SH_MAX_UDP`: UDP sockets of a context, at most.
+- `LIBP2P_UDP_RECEIVE`: bytes of the largest datagram the shell reads.
+- `LIBP2P_UDP_BUFFER`: the send and receive buffer bytes a UDP socket asks for.
 
 ## Spec
 
 - Document: ARCHITECTURE.md section 2 (core and shell) and section 6 (actions and events).
-- Section: the shell of this library: TCP sockets, the clock and random bytes, for Linux (system calls), macOS (libSystem) and Windows (Winsock 2, kernel32, bcrypt).
+- Section: the shell of this library: TCP and UDP sockets, the clock and random bytes, for Linux (system calls), macOS (libSystem) and Windows (Winsock 2, kernel32, bcrypt).
 
 ## Function `libp2p_shell_size`
 
@@ -76,7 +84,7 @@ libp2p_shell_size(params, size) -> status
 
 ### Function does
 
-- Adds the fixed fields, 16 accepted sockets, the poll array and one entry with its send buffer for each connection.
+- Adds the fixed fields, 16 accepted sockets, the poll array (listening, UDP, accepted and connection sockets) and one entry with its send buffer for each connection.
 
 ### Function never
 
@@ -125,7 +133,7 @@ libp2p_shell_init(params, context) -> status
 
 ### Function does
 
-- Writes the fixed fields and marks every socket unused.
+- Writes the fixed fields and marks every socket unused: listening, UDP, accepted and connection sockets.
 - Windows: starts Winsock 2.2, and records that it did.
 
 ### Function never
@@ -182,6 +190,48 @@ libp2p_shell_listen(context, addr, result) -> status
 - Convention: the core ABI for each ISA (ARCHITECTURE.md section 6); OS calls use the native convention.
 - Argument order: `context`, `addr`, `result`.
 
+## Function `libp2p_shell_bind`
+
+Opens a UDP socket bound to an address, for QUIC.
+
+### Signature
+
+```
+libp2p_shell_bind(context, addr, result) -> status
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `context` | resource context | [`ShellContext`](#type-shellcontext) |
+| `addr` | input | [`Address`](node.md#type-address); port 0: any |
+| `result` | output | [`BindResult`](#type-bindresult) |
+
+### Returns
+
+- `LIBP2P_OK`: `result` holds error 0, the socket ID and the bound address, or the OS error.
+
+### Function does
+
+- Opens a non-blocking UDP socket: Linux with SOCK_NONBLOCK and SOCK_CLOEXEC; macOS with `libp2p_shell_udp_socket`, which adds FD_CLOEXEC and SO_NOSIGPIPE; Windows with `libp2p_shell_udp_socket`, which turns off WSAECONNRESET.
+- Sets IPV6_V6ONLY on IPv6.
+- Asks for send and receive buffers of `LIBP2P_UDP_BUFFER` bytes; the OS may give less.
+- Binds, then writes the bound address, with the port the OS chose for port 0.
+- Gives the socket the next socket ID, from 0: DIAL, DATAGRAM and SEND_DATAGRAM name the socket by it.
+- Gives the error EINVAL (WSAEINVAL on Windows) when `LIBP2P_SH_MAX_UDP` sockets are bound already.
+
+### Limits
+
+- Stack of its own: 304 bytes on Linux x86-64, 256 bytes on Linux ARM64, 272 bytes on Linux RISC-V, 304 bytes on macOS x86-64, 256 bytes on macOS ARM64, 304 bytes on Windows x86-64, 256 bytes on Windows ARM64 (x86-64 return address included). OS calls add their own.
+
+### ABI
+
+- Role: L2.
+- Symbol: `libp2p_shell_bind` (`_libp2p_shell_bind` on macOS).
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6); OS calls use the native convention.
+- Argument order: `context`, `addr`, `result`.
+
 ## Function `libp2p_shell_perform`
 
 Performs the shell actions of a step, in order.
@@ -215,6 +265,7 @@ libp2p_shell_perform(context, actions, events) -> status
 - ADOPT: binds the accepted socket of the token to the connection; REFUSE: closes it.
 - SEND: adds the bytes to the send buffer of the connection and writes what the socket takes: SENT; bytes past the buffer close the connection with CLOSED and EINVAL.
 - CLOSE: closes the socket and gives CLOSED, also when the shell holds no socket for the handle.
+- SEND_DATAGRAM: `sendto` on the UDP socket of its ID, without blocking; a datagram the OS does not take is lost, as UDP allows, and QUIC sends it again.
 - Skips the other action kinds: they are for the application.
 
 ### Limits
@@ -252,12 +303,13 @@ libp2p_shell_wait(context, timeout, events) -> status
 
 ### Function does
 
-- Waits up to the timeout, at most 2^31 - 1 ms on macOS and Windows, with ppoll, poll or WSAPoll.
+- Waits up to the timeout, at most 2^31 - 1 ms on macOS and Windows, with ppoll, poll or WSAPoll, on the listening, UDP and connection sockets in one call.
 - ACCEPTED for each new connection, while fewer than 16 wait for ADOPT and the event list has room; others stay in the backlog.
 - CONNECTED or DIAL_FAILED (with SO_ERROR) when a dial ends.
 - SENT as buffered bytes go out.
 - RECEIVED with what a socket holds: at most `LIBP2P_RECEIVE_MAX` bytes and the room of the event list.
 - CLOSED when the peer closes a socket (error 0) or it fails (the OS error).
+- DATAGRAM for each datagram a UDP socket holds (`libp2p_shell_udp_read`), while the event list has room.
 - Windows: sleeps the timeout when WSAPoll fails, as it does with no socket.
 
 ### Limits
@@ -293,7 +345,7 @@ libp2p_shell_close(context) -> status
 
 ### Function does
 
-- Closes the listening sockets, the accepted sockets that wait, and each connection socket.
+- Closes the listening sockets, the UDP sockets, the accepted sockets that wait, and each connection socket.
 - Windows: stops Winsock when `libp2p_shell_init` started it.
 
 ### Limits
@@ -309,7 +361,7 @@ libp2p_shell_close(context) -> status
 
 ## Function `libp2p_shell_clock`
 
-Reads the monotonic time and 32 random bytes.
+Reads the monotonic time, the Unix time and 32 random bytes.
 
 ### Signature
 
@@ -330,9 +382,10 @@ libp2p_shell_clock(tick) -> status
 
 ### Function does
 
-- Linux: `clock_gettime(CLOCK_MONOTONIC)` and `getrandom`.
-- macOS: `clock_gettime_nsec_np(CLOCK_MONOTONIC)` and `getentropy`.
-- Windows: `GetTickCount64` and `BCryptGenRandom` with the system RNG.
+- Writes the monotonic time in ms and in microseconds, from one reading of the clock, and the Unix time in seconds.
+- Linux: `clock_gettime` of CLOCK_MONOTONIC and of CLOCK_REALTIME, and `getrandom`.
+- macOS: `clock_gettime_nsec_np` of CLOCK_MONOTONIC and of CLOCK_REALTIME, and `getentropy`.
+- Windows: `QueryPerformanceCounter` over `QueryPerformanceFrequency`, `GetSystemTimeAsFileTime`, and `BCryptGenRandom` with the system RNG.
 
 ### Function never
 
@@ -340,7 +393,7 @@ libp2p_shell_clock(tick) -> status
 
 ### Limits
 
-- Stack of its own: 304 bytes on Linux x86-64, 112 bytes on Linux ARM64, 128 bytes on Linux RISC-V, 112 bytes on macOS x86-64, 96 bytes on macOS ARM64, 112 bytes on Windows x86-64, 96 bytes on Windows ARM64 (x86-64 return address included). OS calls add their own.
+- Stack of its own: 304 bytes on Linux x86-64, 112 bytes on Linux ARM64, 128 bytes on Linux RISC-V, 112 bytes on macOS x86-64, 96 bytes on macOS ARM64, 304 bytes on Windows x86-64, 112 bytes on Windows ARM64 (x86-64 return address included). OS calls add their own.
 
 ### ABI
 
@@ -1073,6 +1126,107 @@ libp2p_shell_poll(array, count, timeout) -> ready
 - Convention: the core ABI for each ISA (ARCHITECTURE.md section 6); OS calls use the native convention. It returns the ready count, not a status.
 - Argument order: `array`, `count`, `timeout`.
 
+## Function `libp2p_shell_udp_read`
+
+Turns the datagrams waiting on a UDP socket into DATAGRAM events.
+
+### Signature
+
+```
+libp2p_shell_udp_read(context, events, index)
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `context` | resource context | [`ShellContext`](#type-shellcontext) |
+| `events` | output | [`ByteList`](node.md#type-bytelist) of [`Event`](node.md#type-event) values |
+| `index` | input | u64: the UDP socket ID |
+
+### Function does
+
+- While the event list has room for a DATAGRAM event of `LIBP2P_UDP_RECEIVE` bytes: `recvfrom` without blocking into the next event, then sets its size, kind, socket ID, count and sender address.
+- Stops at an error, such as an empty socket.
+- A datagram longer than `LIBP2P_UDP_RECEIVE` bytes does not arrive whole.
+
+### Limits
+
+- Stack of its own: 304 bytes on Linux x86-64, 256 bytes on Linux ARM64, 272 bytes on Linux RISC-V, 304 bytes on macOS x86-64, 256 bytes on macOS ARM64, 304 bytes on Windows x86-64, 256 bytes on Windows ARM64 (x86-64 return address included). OS calls add their own.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_shell_udp_read`, local to its object.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6); OS calls use the native convention.
+- Argument order: `context`, `events`, `index`.
+
+## Function `libp2p_shell_udp_socket`
+
+Opens a non-blocking UDP socket.
+
+### Signature
+
+```
+libp2p_shell_udp_socket(family) -> socket
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `family` | input | u64: the native address family |
+
+### Function does
+
+- Opens the socket, then macOS: `libp2p_shell_prepare`; Windows: `libp2p_shell_nonblock`, then `libp2p_shell_no_connreset`.
+- Closes it again when `libp2p_shell_prepare` or `libp2p_shell_nonblock` fails.
+
+### Limits
+
+- Stack of its own: 112 bytes on macOS x86-64, 96 bytes on macOS ARM64, 112 bytes on Windows x86-64, 96 bytes on Windows ARM64 (x86-64 return address included). OS calls add their own.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_shell_udp_socket`, local to its object.
+- OS: macOS, Windows.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6); OS calls use the native convention. It returns the socket, or minus the error number, not a status.
+- Argument order: `family`.
+
+## Function `libp2p_shell_no_connreset`
+
+Turns off WSAECONNRESET on a UDP socket.
+
+### Signature
+
+```
+libp2p_shell_no_connreset(socket)
+```
+
+### Arguments
+
+| Name | Role | Type |
+|---|---|---|
+| `socket` | input | u64 |
+
+### Function does
+
+- `WSAIoctl` SIO_UDP_CONNRESET with FALSE: an ICMP port unreachable then does not fail the next `recvfrom`.
+- Ignores a failure: reads still work.
+
+### Limits
+
+- Stack of its own: 96 bytes on Windows x86-64, 48 bytes on Windows ARM64 (x86-64 return address included). OS calls add their own.
+
+### ABI
+
+- Role: L0.
+- Symbol: `libp2p_shell_no_connreset`, local to its object.
+- OS: Windows.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6); OS calls use the native convention.
+- Argument order: `socket`.
+
 ## Type `ShellParams`
 
 The size of a shell context.
@@ -1106,7 +1260,9 @@ The sockets of the shell, in one buffer.
 | 72 | `started` | u64 | Windows: 1 when `libp2p_shell_init` started Winsock |
 | 80 | `poll` | u64 | Offset of the poll array |
 | 88 | `entries` | u64 | Offset of the entries |
-| 96 | `accepting` | 16 u64 | Accepted sockets that wait for ADOPT, or -1 |
+| 96 | `udps` | u64 | UDP sockets |
+| 104 | `udp` | 4 u64 | The UDP sockets, or -1: the socket ID is the index |
+| 136 | `accepting` | 16 u64 | Accepted sockets that wait for ADOPT, or -1 |
 
 ### Rules
 
@@ -1145,11 +1301,24 @@ The outcome of `libp2p_shell_listen`.
 | 8 | `addr` | [`Address`](node.md#type-address) | The bound address |
 
 
+## Type `BindResult`
+
+The outcome of `libp2p_shell_bind`.
+
+### Layout
+
+| Offset | Field | Type | Meaning |
+|---|---|---|---|
+| 0 | `error` | u64 | 0, or the OS error number |
+| 8 | `socket` | u64 | The socket ID for DIAL, DATAGRAM and SEND_DATAGRAM |
+| 16 | `addr` | [`Address`](node.md#type-address) | The bound address |
+
+
 ## Test vectors
 
-- The shell loop test ([tests/shell/loop.c](../../tests/shell/loop.c)): two nodes over 127.0.0.1 on each of the 7 targets.
-- transport-interop of libp2p/test-plans ([tests/interop/](../../tests/interop/)) with the Linux shell: 56 pairs on x86-64, ARM64 and RISC-V.
-- The live test on Ethereum mainnet ([tests/mainnet/](../../tests/mainnet/)) with the macOS ARM64 shell.
+- The shell loop test ([tests/shell/loop.c](../../tests/shell/loop.c)): two nodes over 127.0.0.1 on each of the 7 targets, over TCP and over QUIC on UDP.
+- transport-interop of libp2p/test-plans ([tests/interop/](../../tests/interop/)) with the Linux shell: 56 TCP pairs and 24 quic-v1 pairs on x86-64, ARM64 and RISC-V.
+- The live test on Ethereum mainnet ([tests/mainnet/](../../tests/mainnet/)) with the macOS ARM64 shell, over TCP and QUIC.
 
 ## Results
 
@@ -1385,4 +1554,36 @@ The outcome of `libp2p_shell_listen`.
 |---|---|---|---|---|
 | x86-64 |  | ✅ |  |  |
 | ARM64 |  | ✅ |  |  |
+| RISC-V |  |  |  |  |
+
+### `libp2p_shell_bind`
+
+| ISA | Linux | Windows | macOS | `equal` |
+|---|---|---|---|---|
+| x86-64 |  |  |  |  |
+| ARM64 |  |  |  |  |
+| RISC-V |  |  |  |  |
+
+### `libp2p_shell_udp_read`
+
+| ISA | Linux | Windows | macOS | `equal` |
+|---|---|---|---|---|
+| x86-64 |  |  |  |  |
+| ARM64 |  |  |  |  |
+| RISC-V |  |  |  |  |
+
+### `libp2p_shell_udp_socket`
+
+| ISA | Linux | Windows | macOS | `equal` |
+|---|---|---|---|---|
+| x86-64 |  |  |  |  |
+| ARM64 |  |  |  |  |
+| RISC-V |  |  |  |  |
+
+### `libp2p_shell_no_connreset`
+
+| ISA | Linux | Windows | macOS | `equal` |
+|---|---|---|---|---|
+| x86-64 |  |  |  |  |
+| ARM64 |  |  |  |  |
 | RISC-V |  |  |  |  |

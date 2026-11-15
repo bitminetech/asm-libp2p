@@ -304,8 +304,9 @@ END_FUNCTION libp2p_stream_ms_proto
 
 /*
  * libp2p_stream_open(conn, target, tag, proposals, count) -> a new outbound
- * stream that proposes the protocols: its ID is the next of this side, it
- * will send SYN or NewStream, and the multistream header and the first
+ * stream that proposes the protocols: its ID is the next of this side (for
+ * QUIC, 0 until asm-quic opens it), it will send SYN, NewStream or the
+ * asm-quic OPEN_STREAM, and the multistream header and the first
  * proposal are queued. proposals is a heap block of ProtocolEntry values
  * the stream now owns, or 0 for gossipsub. 0 when it cannot be opened.
  * rbx conn, rbp target, r12 tag, r13 proposals, X23 count, X24 stream.
@@ -317,6 +318,9 @@ LOCAL_FUNCTION libp2p_stream_open
     mov     %rdx, %r12
     mov     %rcx, %r13
     mov     %r8, X23(%rsp)
+    xor     %esi, %esi                      /* QUIC: the ID comes with STREAM_OPENED */
+    testq   $CF_QUIC, C_FLAGS(%rbx)
+    jnz     1f
     mov     C_MX_NEXT_ID(%rbx), %rsi
     mov     $1, %eax
     mov     $2, %ecx
@@ -324,7 +328,7 @@ LOCAL_FUNCTION libp2p_stream_open
     cmovnz  %rcx, %rax
     add     %rsi, %rax
     mov     %rax, C_MX_NEXT_ID(%rbx)
-    mov     %rbx, %rdi
+1:  mov     %rbx, %rdi
     mov     $1, %edx
     call    libp2p_stream_new
     test    %rax, %rax
@@ -956,12 +960,14 @@ LOCAL_FUNCTION libp2p_stream_append
 END_FUNCTION libp2p_stream_append
 
 /*
- * libp2p_observed(dst, addr) -> the length of the binary multiaddr of the
- * address: /ip4 (code 4, 4 bytes) or /ip6 (code 41, 16 bytes), then /tcp
- * (code 6, the port big endian). A leaf.
+ * libp2p_observed(dst, addr, quic) -> the length of the binary multiaddr of
+ * the address: /ip4 (code 4, 4 bytes) or /ip6 (code 41, 16 bytes), then
+ * /tcp (code 6, the port big endian), or with quic nonzero /udp (code 273,
+ * the port big endian) and /quic-v1 (code 0x01cc). A leaf.
  */
 LOCAL_FUNCTION libp2p_observed
     UNWIND_END_PROLOGUE
+    mov     %rdx, %r8
     mov     %rdi, %rdx
     cmpq    $6, LIBP2P_ADDR_FAMILY(%rsi)
     je      1f
@@ -976,14 +982,26 @@ LOCAL_FUNCTION libp2p_observed
     mov     (LIBP2P_ADDR_IP + 8)(%rsi), %rax
     mov     %rax, 9(%rdx)
     add     $17, %rdx
-2:  movb    $6, (%rdx)
-    mov     LIBP2P_ADDR_PORT(%rsi), %rax
+2:  test    %r8, %r8
+    jnz     3f
+    movb    $6, (%rdx)
+    inc     %rdx
+    jmp     4f
+3:  movb    $0x91, (%rdx)                   /* 273 as a varint */
+    movb    $0x02, 1(%rdx)
+    add     $2, %rdx
+4:  mov     LIBP2P_ADDR_PORT(%rsi), %rax
     mov     %eax, %ecx
     shr     $8, %ecx
-    movb    %cl, 1(%rdx)
-    movb    %al, 2(%rdx)
-    add     $3, %rdx
-    mov     %rdx, %rax
+    movb    %cl, (%rdx)
+    movb    %al, 1(%rdx)
+    add     $2, %rdx
+    test    %r8, %r8
+    jz      5f
+    movb    $0xcc, (%rdx)                   /* 0x01cc as a varint */
+    movb    $0x03, 1(%rdx)
+    add     $2, %rdx
+5:  mov     %rdx, %rax
     sub     %rdi, %rax
     ret
 END_FUNCTION libp2p_observed
@@ -1011,6 +1029,8 @@ LOCAL_FUNCTION libp2p_identify
     mov     %rax, %r12
     mov     %rbx, %rdi
     call    libp2p_stream_conn
+    mov     C_FLAGS(%rax), %rdx
+    and     $CF_QUIC, %edx
     lea     C_ADDR(%rax), %rsi
     lea     80(%rsp), %rdi
     call    libp2p_observed

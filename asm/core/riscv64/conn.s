@@ -1,8 +1,8 @@
 /*
  * Connections of the RISC-V core: the shell events of a TCP connection,
  * multistream-select 1.0, the upgrade (multistream for /noise, Noise,
- * multistream for the muxer) and the binding of a connection to a peer.
- * Included by libp2p.s.
+ * multistream for the muxer), QUIC dials, and the binding of a connection
+ * to a peer. Included by libp2p.s.
  */
 
 /* ---------------------------------------------------------------- multistream-select 1.0 */
@@ -137,8 +137,10 @@ END_FUNCTION libp2p_ms_is
 /* ---------------------------------------------------------------- Connection slots */
 
 /*
- * libp2p_conn_new(outbound) -> a new connection slot with its receive buffer,
- * in phase PH_DIALING, or 0 when no slot or heap block is free.
+ * libp2p_conn_new(flags) -> a new connection slot in phase PH_DIALING, or 0
+ * when no slot or heap block is free. flags: bit 0 outbound, bit 1 QUIC.
+ * A TCP connection gets its receive buffer; asm-quic holds the bytes of a
+ * QUIC one.
  */
 LOCAL_FUNCTION libp2p_conn_new
     ENTER   0
@@ -149,21 +151,24 @@ LOCAL_FUNCTION libp2p_conn_new
     call    libp2p_alloc_slot
     beqz    a0, 9f
     mv      s2, a0
+    andi    t0, s1, 2
+    bnez    t0, 1f
     li      a0, LIBP2P_RX_SIZE
     call    libp2p_heap_alloc
-    bnez    a0, 1f
+    bnez    a0, 11f
     sw      zero, C_PHASE(s2)
     li      a0, 0
     j       9f
-1:  sd      a0, C_RX(s2)
-    li      t0, NONE
+11: sd      a0, C_RX(s2)
+1:  li      t0, NONE
     sd      t0, C_PEER(s2)
     sd      t0, C_STREAM_HEAD(s2)
     sd      t0, C_MX_STREAM(s2)
     sd      t0, C_CURSOR(s2)
-    li      t0, 0
-    beqz    s1, 2f
-    li      t0, CF_OUTBOUND
+    andi    t0, s1, CF_OUTBOUND
+    andi    t1, s1, 2
+    beqz    t1, 2f
+    ori     t0, t0, CF_QUIC
 2:  sd      t0, C_FLAGS(s2)
     ld      t0, SC_NOW(s10)
     CFG     t1, LIBP2P_CFG_HANDSHAKE_MS
@@ -324,11 +329,21 @@ LOCAL_FUNCTION libp2p_conn_close
 9:  LEAVE   0
 END_FUNCTION libp2p_conn_close
 
-/* libp2p_conn_send_close(conn): a CLOSE action for the connection, or the flag that asks the drain for one. */
+/*
+ * libp2p_conn_send_close(conn): a CLOSE action for the connection, or the
+ * flag that asks the drain for one; for QUIC, the flag that asks for the
+ * asm-quic CLOSE.
+ */
 LOCAL_FUNCTION libp2p_conn_send_close
     ENTER   0
     mv      s1, a0
-    li      a0, LIBP2P_ACTION_CLOSE
+    ld      t0, C_FLAGS(s1)
+    andi    t1, t0, CF_QUIC
+    beqz    t1, 0f
+    ori     t0, t0, CF_NEED_CLOSE
+    sd      t0, C_FLAGS(s1)
+    j       9f
+0:  li      a0, LIBP2P_ACTION_CLOSE
     li      a1, LIBP2P_ACT_CLOSE_SIZE
     call    libp2p_action
     ld      t0, C_FLAGS(s1)
@@ -384,11 +399,17 @@ LOCAL_FUNCTION libp2p_on_accepted
 9:  LEAVE   0
 END_FUNCTION libp2p_on_accepted
 
-/* libp2p_on_dial(event): the application asks for a connection: a DIAL action, or DIAL_FAILED when no slot is free. */
+/*
+ * libp2p_on_dial(event): the application asks for a connection: a DIAL
+ * action for TCP, the asm-quic DIAL (written by the next round of asm-quic)
+ * for QUIC, or DIAL_FAILED when no slot is free.
+ */
 LOCAL_FUNCTION libp2p_on_dial
     ENTER   0
     mv      s1, a0
-    li      a0, 1
+    ld      a0, LIBP2P_EV_DIAL_TRANSPORT(s1)
+    slli    a0, a0, 1
+    ori     a0, a0, 1
     call    libp2p_conn_new
     bnez    a0, 1f
     li      a0, LIBP2P_ACTION_DIAL_FAILED
@@ -412,7 +433,16 @@ LOCAL_FUNCTION libp2p_on_dial
     addi    a0, s2, C_EXP_ID
     addi    a1, s1, LIBP2P_EV_DIAL_ID
     call    libp2p_copy
-    li      a0, LIBP2P_ACTION_DIAL
+    ld      t0, C_FLAGS(s2)
+    andi    t1, t0, CF_QUIC
+    beqz    t1, 2f
+    li      t1, CF_QDIAL
+    or      t0, t0, t1
+    sd      t0, C_FLAGS(s2)
+    ld      t0, LIBP2P_EV_DIAL_SOCKET(s1)
+    sd      t0, C_QSOCK(s2)
+    j       9f
+2:  li      a0, LIBP2P_ACTION_DIAL
     li      a1, LIBP2P_ACT_DIAL_SIZE
     call    libp2p_action
     mv      s3, a0
@@ -430,13 +460,16 @@ LOCAL_FUNCTION libp2p_on_dial
 9:  LEAVE   0
 END_FUNCTION libp2p_on_dial
 
-/* libp2p_on_connected(event): the dial worked: propose /noise. */
+/* libp2p_on_connected(event): the TCP dial worked: propose /noise. */
 LOCAL_FUNCTION libp2p_on_connected
     ENTER   0
     ld      a0, LIBP2P_EV_CONN(a0)
     call    libp2p_conn
     beqz    a0, 9f
     mv      s1, a0
+    ld      t0, C_FLAGS(s1)
+    andi    t0, t0, CF_QUIC
+    bnez    t0, 9f
     lwu     t0, C_PHASE(s1)
     li      t1, PH_DIALING
     bne     t0, t1, 9f
@@ -456,13 +489,16 @@ LOCAL_FUNCTION libp2p_on_connected
 9:  LEAVE   0
 END_FUNCTION libp2p_on_connected
 
-/* libp2p_on_dial_failed(event): the dial failed: DIAL_FAILED, and the slot is free. */
+/* libp2p_on_dial_failed(event): the TCP dial failed: DIAL_FAILED, and the slot is free. */
 LOCAL_FUNCTION libp2p_on_dial_failed
     ENTER   0
     ld      a0, LIBP2P_EV_CONN(a0)
     call    libp2p_conn
     beqz    a0, 9f
     mv      s1, a0
+    ld      t0, C_FLAGS(s1)
+    andi    t0, t0, CF_QUIC
+    bnez    t0, 9f
     lwu     t0, C_PHASE(s1)
     li      t1, PH_CLOSING
     beq     t0, t1, 1f
@@ -476,13 +512,16 @@ LOCAL_FUNCTION libp2p_on_dial_failed
 9:  LEAVE   0
 END_FUNCTION libp2p_on_dial_failed
 
-/* libp2p_on_closed(event): the shell closed the socket: teardown when it was live, and the slot is free. */
+/* libp2p_on_closed(event): the shell closed the TCP socket: teardown when it was live, and the slot is free. */
 LOCAL_FUNCTION libp2p_on_closed
     ENTER   0
     ld      a0, LIBP2P_EV_CONN(a0)
     call    libp2p_conn
     beqz    a0, 9f
     mv      s1, a0
+    ld      t0, C_FLAGS(s1)
+    andi    t0, t0, CF_QUIC
+    bnez    t0, 9f
     lwu     t0, C_PHASE(s1)
     li      t1, PH_CLOSING
     beq     t0, t1, 1f
@@ -549,7 +588,7 @@ END_FUNCTION libp2p_on_disconnect
 /* ---------------------------------------------------------------- Receiving */
 
 /*
- * libp2p_on_received(event): bytes of a connection: into its receive buffer,
+ * libp2p_on_received(event): bytes of a TCP connection: into its receive buffer,
  * which is handled each time it fills or the bytes end.
  * s1 conn, s2 data, s3 bytes left, s4 bytes this round.
  */
@@ -562,6 +601,9 @@ LOCAL_FUNCTION libp2p_on_received
     call    libp2p_conn
     beqz    a0, 9f
     mv      s1, a0
+    ld      t0, C_FLAGS(s1)
+    andi    t0, t0, CF_QUIC
+    bnez    t0, 9f
 1:  beqz    s3, 9f
     lwu     t0, C_PHASE(s1)
     li      t1, PH_SECURITY
@@ -1178,6 +1220,10 @@ LOCAL_FUNCTION libp2p_peer_bind
     addi    a0, s3, LIBP2P_ACT_PC_ID
     addi    a1, s2, P_ID
     call    libp2p_copy
+    ld      t0, C_FLAGS(s1)                 # LIBP2P_QUIC for a QUIC connection
+    srli    t0, t0, 10
+    andi    t0, t0, 1
+    sd      t0, LIBP2P_ACT_PC_TRANSPORT(s3)
 6:  mv      a0, s2
     call    libp2p_gossip_peer_up
     j       99f

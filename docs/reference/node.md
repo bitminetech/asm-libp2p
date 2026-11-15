@@ -42,7 +42,7 @@
 - [`Tick`](#type-tick): the time and entropy of a step.
 - [`StepResult`](#type-stepresult): the output of `libp2p_step`.
 - [`ByteList`](#type-bytelist): a list of bytes with its buffer size.
-- [`Address`](#type-address): an IP address and TCP port.
+- [`Address`](#type-address): an IP address and TCP or UDP port.
 - [`Handle`](#type-handle): a reference to a connection, stream, peer or message.
 - [`Event`](#type-event): the header of every event.
 - [`Action`](#type-action): the header of every action.
@@ -60,7 +60,7 @@
 ## Spec
 
 - Document: [p2p-interface.md](https://github.com/ethereum/consensus-specs/blob/313cbfe561517a81eb11607fea7c6985e562eaa9/specs/phase0/p2p-interface.md), consensus-specs at commit 313cbfe; and [connections/README.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/connections/README.md), libp2p/specs at commit c750236.
-- Section: the network of an Ethereum consensus client: TCP, Noise, mplex and yamux, gossipsub v1.1, v1.2 and v1.3 with the Partial Messages extension. ARCHITECTURE.md section 6 gives the event and action model.
+- Section: the network of an Ethereum consensus client: TCP with Noise and mplex or yamux, QUIC v1 through asm-quic ([quic.md](quic.md)), gossipsub v1.1, v1.2 and v1.3 with the Partial Messages extension. ARCHITECTURE.md section 6 gives the event and action model.
 
 ## Function `libp2p_state_size`
 
@@ -93,6 +93,7 @@ libp2p_state_size(config, size) -> status
 
 - Checks the config as `libp2p_init` does.
 - Adds the fixed fields and each table of the config: connections, streams, peers, topics, peer x topic entries, the seen cache and its index, the message cache and its index, pending messages, promises, protocols, then the heap at a multiple of 64.
+- With QUIC on: then the asm-quic stream map and connection map (a u32 for each slot), the event list for asm-quic, the action list of asm-quic, and the asm-quic state at a multiple of 64, which `quic_state_size` sizes.
 
 ### Function never
 
@@ -102,7 +103,7 @@ libp2p_state_size(config, size) -> status
 
 ### Limits
 
-- Stack: 384 bytes on x86-64 (return address included), 384 bytes on ARM64, 416 bytes on RISC-V, callees included, the most the test runner measured.
+- Stack: 744 bytes on x86-64 (return address included), 736 bytes on ARM64, 784 bytes on RISC-V, callees included, the most the test runner measured.
 
 ### ABI
 
@@ -151,6 +152,7 @@ libp2p_init(config, state) -> status
 - Copies the fixed config fields and the protocol list into the state.
 - Makes every table empty and the heap one free block.
 - Sets the first heartbeat at `now` + `heartbeat_ms`, and the first score decay at `now` + `decay_interval_ms`.
+- With QUIC on: marks every entry of the asm-quic maps unused, makes the event and action lists of asm-quic empty, and builds the asm-quic state with `quic_init`: the config of `libp2p_quic_config`, with a seed of 32 bytes drawn from the DRBG.
 
 ### Function never
 
@@ -160,7 +162,7 @@ libp2p_init(config, state) -> status
 
 ### Limits
 
-- Stack: 2632 bytes on x86-64 (return address included), 2672 bytes on ARM64, 2784 bytes on RISC-V, callees included, the most the test runner measured.
+- Stack: 4120 bytes on x86-64 (return address included), 4160 bytes on ARM64, 4288 bytes on RISC-V, callees included, the most the test runner measured.
 
 ### ABI
 
@@ -199,11 +201,11 @@ libp2p_step(state, tick, events, scratch, actions, result) -> status
 ### Caller must
 
 - Pass a state that `libp2p_init` built, and no other step on it at the same time.
-- Pass a fresh tick: the monotonic time in ms and 32 fresh random bytes.
+- Pass a fresh tick: the monotonic time in ms and in microseconds from one clock, the Unix time in seconds, and 32 fresh random bytes.
 - Set the `size` fields of `scratch` and `actions`.
 - Keep every buffer apart from the others.
 - Pass buffers that start at a multiple of 8.
-- Perform the shell actions (DIAL, ADOPT, REFUSE, SEND, CLOSE) in order, and pass their results as events of a later step.
+- Perform the shell actions (DIAL, ADOPT, REFUSE, SEND, CLOSE, SEND_DATAGRAM) in order, and pass their results as events of a later step.
 
 ### Function does
 
@@ -211,10 +213,12 @@ libp2p_step(state, tick, events, scratch, actions, result) -> status
 - Takes the time of the tick, or the time of the last step when the tick is earlier.
 - Mixes the entropy of the tick into the DRBG: the key becomes SHA-256 of the key and the 32 bytes.
 - Frees the RPC blocks that the PARTIAL actions of the last step referred to (`libp2p_free_kept`).
+- With QUIC on: writes the asm-quic tick (the microseconds and Unix time of the tick, 32 bytes from the DRBG), then hands on the actions the last `quic_step` left (`libp2p_quic_actions`).
 - Handles the events in order while the action room left covers what the next event may need (`libp2p_event_room`), and writes the count handled to `result`.
 - Runs the timers: upgrade deadlines, validation deadlines, retained scores, the gossipsub heartbeat and score decay.
-- Turns queued bytes into SEND actions while each connection has send window.
-- Ends the actions with one WAKEUP: the time of the next deadline, at most 60 s ahead, or now when events are left.
+- With QUIC on: runs asm-quic (`libp2p_quic_pump`). Its actions become SEND_DATAGRAM actions and changes of connections and streams; the queued bytes of QUIC streams become asm-quic events.
+- Turns queued bytes into SEND actions while each TCP connection has send window.
+- Ends the actions with one WAKEUP: the time of the next deadline (the asm-quic deadline rounded up to a ms included), at most 60 s ahead, or now when events are left.
 - Holds the state in x27, r15 or s9 and the scratch in x28, r14 or s10 while it runs; no function it calls changes them.
 
 ### Function never
@@ -231,7 +235,7 @@ libp2p_step(state, tick, events, scratch, actions, result) -> status
 
 ### Limits
 
-- Stack: 2672 bytes on x86-64 (return address included), 2832 bytes on ARM64, 3024 bytes on RISC-V, callees included, the most the test runner measured.
+- Stack: 3400 bytes on x86-64 (return address included), 3520 bytes on ARM64, 3792 bytes on RISC-V, callees included, the most the test runner measured.
 
 ### ABI
 
@@ -264,8 +268,8 @@ libp2p_layout(config, tables) -> status, size
 
 ### Function does
 
-- Applies every rule of [`Config`](#type-config).
-- Lays out the tables in this order: connections, streams, peers, topics, peer x topic, seen, seen index, message cache, its index, pending, promises, protocols, IDONTWANT rings, heap.
+- Applies every rule of [`Config`](#type-config). With QUIC on, `quic_state_size` also checks the asm-quic config of `libp2p_quic_config`.
+- Lays out the tables in this order: connections, streams, peers, topics, peer x topic, seen, seen index, message cache, its index, pending, promises, protocols, IDONTWANT rings, heap; with QUIC on, then the asm-quic stream map, connection map, event list, action list and state.
 
 ### Function never
 
@@ -274,7 +278,7 @@ libp2p_layout(config, tables) -> status, size
 
 ### Limits
 
-- Stack of its own: 96 bytes on x86-64 (return address included), 96 bytes on ARM64, 112 bytes on RISC-V.
+- Stack of its own: 304 bytes on x86-64 (return address included), 304 bytes on ARM64, 320 bytes on RISC-V.
 
 ### ABI
 
@@ -376,6 +380,7 @@ libp2p_event_room(event) -> bytes
 - Gives 64 + 16 for each byte of a RECEIVED event.
 - Gives 16384 for CLOSED, DIAL_FAILED and DISCONNECT, which can end a connection and its streams.
 - Gives `LIBP2P_ACT_PL_TOPIC` + `LIBP2P_MAX_TOPIC` + 16 for each peer slot for PARTIAL_PEERS.
+- Gives 0 for DATAGRAM, which makes no action; all ones when the event list for asm-quic has no room for it, so it waits for a later step.
 - Gives 1024 for any other kind.
 
 ### Function never
@@ -390,7 +395,7 @@ libp2p_event_room(event) -> bytes
 
 - Role: L0.
 - Symbol: `libp2p_event_room`, local to its object.
-- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6). It returns the byte count, not a status.
+- Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9. It returns the byte count, not a status.
 - Argument order: `event`.
 
 ## Function `libp2p_event`
@@ -468,8 +473,9 @@ libp2p_timers()
 
 ### Function does
 
-- Closes a connection whose upgrade passed its deadline: CONNECT before the TCP connection opened, else HANDSHAKE.
-- Asks for a wakeup at the deadline of each connection still in its upgrade.
+- Closes a TCP connection whose upgrade passed its deadline: CONNECT before the TCP connection opened, else HANDSHAKE.
+- Asks for a wakeup at the deadline of each TCP connection still in its upgrade.
+- Skips QUIC connections: asm-quic times their handshakes with `handshake_ms`.
 - Runs `libp2p_gossip_timers`.
 
 ### Function never
@@ -1296,6 +1302,15 @@ The limits, keys and parameters of a node.
 | 680 | `max_idontwant_length` | u64 | Message IDs taken from one IDONTWANT |
 | 688 | `gossipsub_v13` | u64 | 0 or 1; 1 needs `gossipsub_v12` 1: "/meshsub/1.3.0" is proposed first and accepted |
 | 696 | `partial_messages` | u64 | 0 or 1; 1 needs `gossipsub_v13` 1: the Partial Messages extension |
+| 704 | `quic` | u64 | 0 off; `LIBP2P_QUIC_ON`; or `LIBP2P_QUIC_ON` + `LIBP2P_QUIC_ACCEPT` to take connections that peers dial |
+| 712 | `quic_heap` | u64 | Heap bytes of the asm-quic state; asm-quic gives its range |
+| 720 | `quic_idle_ms` | u64 | QUIC idle timeout (max_idle_timeout) |
+| 728 | `quic_keep_alive_ms` | u64 | A QUIC PING after this quiet time; 0: none |
+| 736 | `quic_max_data` | u64 | initial_max_data of a QUIC connection |
+| 744 | `quic_stream_data` | u64 | initial_max_stream_data_bidi_local and _remote |
+| 752 | `quic_max_streams` | u64 | initial_max_streams_bidi |
+| 760 | `quic_sent` | u64 | Sent packet records of a QUIC connection |
+| 768 | `quic_window` | u64 | Bytes a QUIC stream may have with asm-quic, not yet acknowledged, 65536 to 2^30 |
 
 ### Rules
 
@@ -1303,6 +1318,7 @@ The limits, keys and parameters of a node.
 - With protocols, `protocols` is a multiple of 8, at least `LIBP2P_CFG_FIXED`, and the list ends within `size`.
 - Each ranged field holds a value in its range; a config outside them gives `LIBP2P_INVALID_CONFIG`.
 - Fields with no range take any value.
+- With QUIC on, `quic_window` is in its range, and the asm-quic config that `libp2p_quic_config` makes passes the checks of `quic_state_size`.
 
 
 ## Type `ProtocolEntry`
@@ -1332,6 +1348,8 @@ The input of each step: the time and fresh random bytes.
 |---|---|---|---|
 | 0 | `now` | u64 | Monotonic time in ms |
 | 8 | `entropy` | 32 bytes | Fresh random bytes |
+| 40 | `us` | u64 | Monotonic time in microseconds, from the same clock as `now` |
+| 48 | `unix_time` | u64 | Unix time in seconds: QUIC checks the dates of certificates with it |
 
 ### Rules
 
@@ -1374,14 +1392,14 @@ A buffer: its size, where the bytes start, and how many there are.
 
 ## Type `Address`
 
-An IPv4 or IPv6 address and a TCP port.
+An IPv4 or IPv6 address and a TCP or UDP port.
 
 ### Layout
 
 | Offset | Field | Type | Meaning |
 |---|---|---|---|
 | 0 | `family` | u64 | 4 or 6 |
-| 8 | `port` | u64 | TCP port |
+| 8 | `port` | u64 | TCP or UDP port |
 | 16 | `ip` | 16 bytes | IPv4 in the first 4 bytes, or IPv6, in network order |
 
 ### Rules
@@ -1422,7 +1440,7 @@ One input of a step: a shell result or an application request.
 
 - The fields of each kind follow, as its type gives.
 - An event whose size is below the fixed size of its kind is invalid.
-- Shell results: ACCEPTED, CONNECTED, DIAL_FAILED, RECEIVED, SENT, CLOSED.
+- Shell results: ACCEPTED, CONNECTED, DIAL_FAILED, RECEIVED, SENT, CLOSED, DATAGRAM.
 - Application requests: the other kinds.
 
 
@@ -1440,7 +1458,7 @@ One output of a step: a shell request or an application notice.
 ### Rules
 
 - The fields of each kind follow, as its type gives.
-- Shell requests: DIAL, ADOPT, REFUSE, SEND, CLOSE and WAKEUP.
+- Shell requests: DIAL, ADOPT, REFUSE, SEND, CLOSE, SEND_DATAGRAM and WAKEUP.
 - Application notices: the other kinds.
 - Actions come in the order the node made them; WAKEUP is the last action of every step.
 
@@ -1478,6 +1496,7 @@ The state of a node: one buffer that `libp2p_init` builds.
 - The data of a MESSAGE action lies in the state, at `data_off`, until the next step.
 - The group, metadata and message of a PARTIAL action lie in the state, at their offsets, until the next step.
 - One thread at a time uses a state.
+- With QUIC on, it holds the asm-quic state, the event list for asm-quic and the action list of its last `quic_step` (`LIBP2P_QUIC_EVENTS` and `LIBP2P_QUIC_ACTIONS` bytes).
 
 
 ## Type `Scratch`
@@ -1494,6 +1513,7 @@ The work area of `libp2p_step`.
 
 - It holds at least `LIBP2P_SCRATCH_SIZE` bytes.
 - Its contents do not carry from one step to the next.
+- It holds the tick, step result and scratch of `quic_step`.
 
 
 ## Type `HeapBlock`

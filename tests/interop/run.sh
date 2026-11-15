@@ -1,13 +1,15 @@
 #!/bin/sh
 # Run transport-interop pairs: the asm-libp2p node dials each implementation,
-# and each implementation dials the asm-libp2p node, over TCP with Noise, for
-# each muxer the implementation offers. A pair passes when the dialer prints
-# its handshake and ping times.
-# Usage: tests/interop/run.sh ISA [IMPLEMENTATION ...]    (no names: all 16)
+# and each implementation dials the asm-libp2p node, over TCP with Noise for
+# each muxer the implementation offers, and over quic-v1 when it offers it.
+# A pair passes when the dialer prints its handshake and ping times.
+# Usage: tests/interop/run.sh ISA [IMPLEMENTATION ...]    (no names: all 17)
 # Environment: RUNS=n runs each pair n times (default 1). BASELINE=1 also runs
 # each implementation against itself, and the asm-libp2p node against itself.
-# Each line: PASS or FAIL, implementation, muxer, direction, then for a pass
-# the handshakePlusOneRTTMillis and pingRTTMilllis that the dialer printed.
+# TRANSPORT=tcp or TRANSPORT=quic-v1 runs only the pairs of that transport.
+# Each line: PASS or FAIL, implementation, muxer (or quic-v1), direction,
+# then for a pass the handshakePlusOneRTTMillis and pingRTTMilllis that the
+# dialer printed.
 # Needs the images from tests/interop/build-images.sh.
 set -u
 isa=$1
@@ -15,26 +17,33 @@ shift
 asm=asm-libp2p-interop-$isa
 runs=${RUNS:-1}
 baseline=${BASELINE:-0}
-all="go-v0.46:yamux go-v0.47:yamux go-v0.48:yamux dotnet-v1.0:yamux
+transport=${TRANSPORT:-}
+all="go-v0.46:yamux,quic-v1 go-v0.47:yamux,quic-v1 go-v0.48:yamux,quic-v1 dotnet-v1.0:yamux
 node-js-v1.x:yamux,mplex node-js-v2.x:yamux,mplex node-js-v3.x:yamux,mplex nim-v1.14:yamux,mplex
-nim-v2.4:yamux,mplex python-v0.x:yamux,mplex jvm-libp2p-v1.3:yamux,mplex c-v0.0.1:yamux,mplex
-rust-v0.53:yamux,mplex rust-v0.54:yamux,mplex rust-v0.55:yamux,mplex rust-v0.56:yamux,mplex"
-[ "$baseline" = 1 ] && all="asm-libp2p:yamux,mplex $all"
+nim-v2.4:yamux,mplex,quic-v1 python-v0.x:yamux,mplex,quic-v1 jvm-libp2p-v1.3:yamux,mplex,quic-v1
+c-v0.0.1:yamux,mplex,quic-v1 rust-v0.53:yamux,mplex,quic-v1 rust-v0.54:yamux,mplex,quic-v1
+rust-v0.55:yamux,mplex,quic-v1 rust-v0.56:yamux,mplex,quic-v1 eth-p2p-z-v0.0.1:quic-v1"
+[ "$baseline" = 1 ] && all="asm-libp2p:yamux,mplex,quic-v1 $all"
 
-pair() {    # dialer image, listener image, muxer -> 0, with timing set, when the dialer reported its times
+pair() {    # dialer image, listener image, muxer or quic-v1 -> 0, with timing set, when the dialer reported its times
     tmp=$(mktemp -d)
+    if [ "$3" = quic-v1 ]; then
+        env="transport: quic-v1"
+    else
+        env="transport: tcp, muxer: $3, security: noise"
+    fi
     cat > "$tmp/compose.yaml" <<YAML
 name: interop
 services:
   dialer:
     image: $1
     depends_on: [redis]
-    environment: {transport: tcp, is_dialer: "true", ip: 0.0.0.0, muxer: $3, security: noise}
+    environment: {$env, is_dialer: "true", ip: 0.0.0.0}
   listener:
     init: true
     image: $2
     depends_on: [redis]
-    environment: {transport: tcp, is_dialer: "false", ip: 0.0.0.0, muxer: $3, security: noise}
+    environment: {$env, is_dialer: "false", ip: 0.0.0.0}
   redis:
     image: redis:7-alpine
     environment: {REDIS_ARGS: --loglevel warning}
@@ -67,6 +76,10 @@ for entry in $all; do
     image=$impl
     [ "$impl" = asm-libp2p ] && image=$asm
     for muxer in $(echo "${entry#*:}" | tr , ' '); do
+        case "$transport:$muxer" in
+          tcp:quic-v1) continue ;;
+          quic-v1:yamux|quic-v1:mplex) continue ;;
+        esac
         for dir in $dirs; do
             case $dir in
               asm-to-impl)  d=$asm;   l=$image ;;

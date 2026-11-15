@@ -26,11 +26,14 @@
  * config and writes the table offsets and counts at tables (the ST_TABLES
  * fields), in this order: connections, streams, peers, topics, peer x
  * topic, seen, seen index, message cache, its index, pending, promises,
- * protocols, IDONTWANT rings, heap.
- * x19 config, x20 tables, x21 offset, x22 to x26 counts.
+ * protocols, IDONTWANT rings, heap; with QUIC on, then the asm-quic stream
+ * and connection maps, the asm-quic event and action lists, and the
+ * asm-quic state, whose config quic_state_size checks.
+ * x19 config, x20 tables, x21 offset, x22 to x26 counts. The asm-quic
+ * Config at sp, its state size at sp + QUIC_CFG_SIZE.
  */
 LOCAL_FUNCTION libp2p_layout
-    ENTER   0
+    ENTER   0, (QUIC_CFG_SIZE + 16)
     mov     x19, x0
     mov     x20, x1
     ldr     x9, [x19, #LIBP2P_CFG_SIZE]
@@ -127,6 +130,15 @@ LOCAL_FUNCTION libp2p_layout
     RANGE   x11, 0, 1, 80f
     cmp     x11, x10
     b.hi    80f
+    ldr     x10, [x19, #LIBP2P_CFG_QUIC]           /* QUIC: off, on, or on and accepting */
+    cmp     x10, #(LIBP2P_QUIC_ON | LIBP2P_QUIC_ACCEPT)
+    b.hi    80f
+    cmp     x10, #LIBP2P_QUIC_ACCEPT
+    b.eq    80f
+    cbz     x10, 13f
+    ldr     x10, [x19, #LIBP2P_CFG_QUIC_WINDOW]
+    RANGE   x10, 65536, 0x40000000, 80f
+13:
 
     /* The protocols part. */
     ldr     x26, [x19, #LIBP2P_CFG_PROTOCOLS_COUNT]
@@ -219,25 +231,59 @@ LOCAL_FUNCTION libp2p_layout
     ldr     x9, [x19, #LIBP2P_CFG_HEAP_SIZE]
     str     x21, [x20, #(ST_HEAP_OFF - ST_TABLES)]
     str     x9, [x20, #(ST_HEAP_SIZE - ST_TABLES)]
+    add     x21, x21, x9
+    str     x21, [x20, #(ST_QMAP_OFF - ST_TABLES)]
+    ldr     x9, [x19, #LIBP2P_CFG_QUIC]
+    cbnz    x9, 4f
+    str     x21, [x20, #(ST_QCMAP_OFF - ST_TABLES)]     /* QUIC off: the parts are empty */
+    str     x21, [x20, #(ST_QEV_OFF - ST_TABLES)]
+    str     x21, [x20, #(ST_QACT_OFF - ST_TABLES)]
+    str     xzr, [x20, #(ST_QUIC_OFF - ST_TABLES)]
+    mov     x1, x21
+    b       5f
+4:  ldr     x9, [x19, #LIBP2P_CFG_MAX_STREAMS]  /* the asm-quic stream map: u32 each */
+    add     x21, x21, x9, lsl #2
+    ALIGN8  x21
+    str     x21, [x20, #(ST_QCMAP_OFF - ST_TABLES)]
+    ldr     x9, [x19, #LIBP2P_CFG_MAX_CONNECTIONS]
+    add     x21, x21, x9, lsl #2
+    ALIGN8  x21
+    str     x21, [x20, #(ST_QEV_OFF - ST_TABLES)]
+    MOV64   x9, (LIBP2P_BL_FIXED + LIBP2P_QUIC_EVENTS)
+    add     x21, x21, x9
+    str     x21, [x20, #(ST_QACT_OFF - ST_TABLES)]
+    MOV64   x9, (LIBP2P_BL_FIXED + LIBP2P_QUIC_ACTIONS)
+    add     x21, x21, x9
+    add     x21, x21, #63                   /* the asm-quic state, at a multiple of 64 */
+    and     x21, x21, #~63
+    str     x21, [x20, #(ST_QUIC_OFF - ST_TABLES)]
+    mov     x0, x19
+    mov     x1, sp
+    bl      libp2p_quic_config
+    mov     x0, sp
+    add     x1, sp, #QUIC_CFG_SIZE
+    CALL_GLOBAL quic_state_size
+    cbnz    x0, 80f
+    ldr     x9, [sp, #QUIC_CFG_SIZE]
     add     x1, x21, x9
-    mov     x0, #LIBP2P_OK
+5:  mov     x0, #LIBP2P_OK
     b       99f
 80: mov     x0, #LIBP2P_INVALID_CONFIG
     mov     x1, #0
-99: LEAVE   0
+99: LEAVE   0, (QUIC_CFG_SIZE + 16)
 END_FUNCTION libp2p_layout
 
 /* ---------------------------------------------------------------- libp2p_state_size */
 
 /* libp2p_state_size(config, size) -> status: the bytes of the state for the config. */
 FUNCTION libp2p_state_size
-    ENTER   0, 192
+    ENTER   0, TABLES_ROOM
     mov     x19, x1
     mov     x1, sp
     bl      libp2p_layout
     cbnz    x0, 9f
     str     x1, [x19]
-9:  LEAVE   0, 192
+9:  LEAVE   0, TABLES_ROOM
 END_FUNCTION libp2p_state_size
 
 /* ---------------------------------------------------------------- libp2p_init */
@@ -245,11 +291,18 @@ END_FUNCTION libp2p_state_size
 /*
  * libp2p_init(config, state) -> status. Checks the config, the state size
  * and the private key; then builds the state: keys, peer ID, the static
- * Noise key and its signature, empty tables, one free heap block, timers.
- * x19 config, x20 state, x21 the state size needed.
+ * Noise key and its signature, empty tables, one free heap block, timers;
+ * with QUIC on, the asm-quic maps and lists, and the asm-quic state with a
+ * seed from the DRBG.
+ * x19 config, x20 state, x21 the state size needed. The table fields at
+ * sp (then the asm-quic Config), the public key at sp + IN_KEY, a ByteList
+ * at sp + IN_BL.
  */
+.set IN_KEY, TABLES_ROOM
+.set IN_BL, IN_KEY + 48
+.set IN_FRAME, IN_BL + 64
 FUNCTION libp2p_init
-    ENTER   0, 256
+    ENTER   0, IN_FRAME
     mov     x19, x0
     mov     x20, x1
     mov     x27, x1
@@ -265,7 +318,7 @@ FUNCTION libp2p_init
     cmp     x9, #LIBP2P_KEY_SECP256K1
     b.ne    1f
     add     x0, x19, #LIBP2P_CFG_PRIVATE_KEY
-    add     x1, sp, #192
+    add     x1, sp, #IN_KEY
     CALL_GLOBAL crypto_secp256k1_public_key
     mov     x9, x0
     mov     x0, #LIBP2P_INVALID_KEY
@@ -273,7 +326,7 @@ FUNCTION libp2p_init
     mov     x22, #33
     b       2f
 1:  add     x0, x19, #LIBP2P_CFG_PRIVATE_KEY
-    add     x1, sp, #192
+    add     x1, sp, #IN_KEY
     CALL_GLOBAL crypto_ed25519_public_key
     mov     x22, #32
 
@@ -286,7 +339,7 @@ FUNCTION libp2p_init
     str     x9, [x20, #ST_VERSION]
     add     x0, x20, #ST_TABLES
     mov     x1, sp
-    mov     x2, #(ST_DW_OFF - ST_TABLES + 8)
+    mov     x2, #(ST_TABLES_END - ST_TABLES)
     bl      libp2p_copy
     add     x0, x20, #ST_CONFIG
     mov     x1, x19
@@ -302,18 +355,17 @@ FUNCTION libp2p_init
     ldr     x1, [x19, #LIBP2P_CFG_PROTOCOLS]
     add     x1, x19, x1
     bl      libp2p_copy
-    add     x0, x20, #ST_DRBG_KEY               /* DRBG key = SHA-256(entropy) */
-    mov     x9, #56
-    str     x9, [sp, #192 - 64]
+    mov     x9, #56                             /* DRBG key = SHA-256(entropy) */
+    str     x9, [sp, #IN_BL]
     mov     x9, #LIBP2P_BL_FIXED
-    str     x9, [sp, #192 - 56]
+    str     x9, [sp, #(IN_BL + 8)]
     mov     x9, #32
-    str     x9, [sp, #192 - 48]
-    add     x0, sp, #192 - 40
+    str     x9, [sp, #(IN_BL + 16)]
+    add     x0, sp, #(IN_BL + 24)
     add     x1, x19, #LIBP2P_CFG_ENTROPY
     mov     x2, #32
     bl      libp2p_copy
-    add     x0, sp, #192 - 64
+    add     x0, sp, #IN_BL
     add     x1, x20, #ST_DRBG_KEY
     CALL_GLOBAL crypto_sha256
     ldr     x9, [x19, #LIBP2P_CFG_KEY_TYPE]
@@ -323,7 +375,7 @@ FUNCTION libp2p_init
     mov     x2, #32
     bl      libp2p_copy
     add     x0, x20, #ST_PUBLIC_KEY
-    add     x1, sp, #192
+    add     x1, sp, #IN_KEY
     mov     x2, x22
     bl      libp2p_copy
     str     x22, [x20, #ST_PUBLIC_LEN]
@@ -372,8 +424,46 @@ FUNCTION libp2p_init
     ldr     x10, [x20, #(ST_CONFIG + LIBP2P_CFG_DECAY_INTERVAL_MS)]
     add     x10, x9, x10
     str     x10, [x20, #ST_DECAY_AT]
-    mov     x0, #LIBP2P_OK
-99: LEAVE   0, 256
+    ldr     x9, [x20, #ST_QUIC_OFF]             /* QUIC: maps, lists, the asm-quic state */
+    cbz     x9, 6f
+    ldr     x0, [x20, #ST_QMAP_OFF]
+    add     x0, x20, x0
+    ldr     x1, [x20, #ST_QEV_OFF]
+    add     x1, x20, x1
+    mov     x9, #NONE
+5:  cmp     x0, x1
+    b.hs    51f
+    str     x9, [x0], #8
+    b       5b
+51: ldr     x0, [x20, #ST_QEV_OFF]
+    add     x0, x20, x0
+    MOV64   x9, (LIBP2P_BL_FIXED + LIBP2P_QUIC_EVENTS)
+    str     x9, [x0, #LIBP2P_BL_SIZE]
+    mov     x9, #LIBP2P_BL_FIXED
+    str     x9, [x0, #LIBP2P_BL_OFFSET]
+    str     xzr, [x0, #LIBP2P_BL_COUNT]
+    ldr     x0, [x20, #ST_QACT_OFF]
+    add     x0, x20, x0
+    MOV64   x9, (LIBP2P_BL_FIXED + LIBP2P_QUIC_ACTIONS)
+    str     x9, [x0, #LIBP2P_BL_SIZE]
+    mov     x9, #LIBP2P_BL_FIXED
+    str     x9, [x0, #LIBP2P_BL_OFFSET]
+    str     xzr, [x0, #LIBP2P_BL_COUNT]
+    ldr     x9, [x20, #ST_QUIC_OFF]
+    sub     x10, x21, x9
+    str     x10, [x20, x9]                      /* the size of the asm-quic state */
+    mov     x0, x19
+    mov     x1, sp
+    bl      libp2p_quic_config
+    add     x0, sp, #QUIC_CFG_SEED
+    mov     x1, #32
+    bl      libp2p_random
+    mov     x0, sp
+    ldr     x1, [x20, #ST_QUIC_OFF]
+    add     x1, x20, x1
+    CALL_GLOBAL quic_init
+6:  mov     x0, #LIBP2P_OK
+99: LEAVE   0, IN_FRAME
 END_FUNCTION libp2p_init
 
 /* ---------------------------------------------------------------- Event checks */
@@ -418,7 +508,13 @@ LOCAL_FUNCTION libp2p_check_event
     b.ne    3f
     ldr     x9, [x19, #LIBP2P_EV_DIAL_ID_LEN]
     RANGE   x9, 0, LIBP2P_MAX_PEER_ID, 80f
-    add     x0, x19, #LIBP2P_EV_DIAL_ADDR
+    ldr     x9, [x19, #LIBP2P_EV_DIAL_TRANSPORT]
+    cmp     x9, #LIBP2P_QUIC
+    b.hi    80f
+    b.ne    21f
+    ldr     x9, [x27, #ST_QUIC_OFF]         /* QUIC needs QUIC on */
+    cbz     x9, 80f
+21: add     x0, x19, #LIBP2P_EV_DIAL_ADDR
     bl      libp2p_check_addr
     b       99f
 3:  cmp     x21, #LIBP2P_EVENT_OPEN_STREAM
@@ -540,7 +636,7 @@ LOCAL_FUNCTION libp2p_check_event
     b.hi    80f
     b       70f
 13: cmp     x21, #LIBP2P_EVENT_PARTIAL_SCORE
-    b.ne    70f
+    b.ne    14f
     ldr     x9, [x19, #LIBP2P_EV_PSCORE_RESULT]
     RANGE   x9, 1, 2, 80f
     ldr     x9, [x19, #LIBP2P_EV_PSCORE_TOPIC_LEN]
@@ -548,6 +644,20 @@ LOCAL_FUNCTION libp2p_check_event
     sub     x10, x20, #LIBP2P_EV_PSCORE_TOPIC
     cmp     x9, x10
     b.hi    80f
+    b       70f
+14: cmp     x21, #LIBP2P_EVENT_DATAGRAM
+    b.ne    70f
+    ldr     x9, [x27, #ST_QUIC_OFF]         /* QUIC on */
+    cbz     x9, 80f
+    RANGE   x20, LIBP2P_EV_DG_DATA, (LIBP2P_EV_DG_DATA + LIBP2P_DATAGRAM_MAX + 1), 80f
+    ldr     x9, [x19, #LIBP2P_EV_DG_COUNT]
+    RANGE   x9, 0, LIBP2P_DATAGRAM_MAX, 80f
+    sub     x10, x20, #LIBP2P_EV_DG_DATA
+    cmp     x9, x10
+    b.hi    80f
+    add     x0, x19, #LIBP2P_EV_DG_ADDR
+    bl      libp2p_check_addr
+    b       99f
 70: mov     x0, #0
     b       99f
 80: mov     x0, #1
@@ -562,7 +672,7 @@ END_FUNCTION libp2p_check_event
     .hword  LIBP2P_EV_STREAM_DATA, LIBP2P_EV_STREAM_SIZE, LIBP2P_EV_STREAM_SIZE, LIBP2P_EV_TOPIC
     .hword  LIBP2P_EV_TOPIC, LIBP2P_EV_PUB_TOPIC, LIBP2P_EV_MSG_ID_SIZE, LIBP2P_EV_VALIDATION_SIZE
     .hword  LIBP2P_EV_SCORE_SIZE, LIBP2P_EV_TP_TOPIC, LIBP2P_EV_PS_TOPIC, LIBP2P_EV_PP_TOPIC
-    .hword  LIBP2P_EV_PSEND_BYTES, LIBP2P_EV_PSCORE_TOPIC
+    .hword  LIBP2P_EV_PSEND_BYTES, LIBP2P_EV_PSCORE_TOPIC, LIBP2P_EV_DG_DATA
     .p2align 2
 
 /* libp2p_check_addr(addr) -> 0 when the family is 4 or 6 and the port below 65536, else 1. A leaf. */
@@ -585,12 +695,26 @@ END_FUNCTION libp2p_check_addr
  * libp2p_event_room(event) -> the action bytes handling the event may need:
  * 64 + 16 for each received byte, 16384 for an event that can end a
  * connection, LIBP2P_ACT_PL_TOPIC + LIBP2P_MAX_TOPIC + 16 for each peer
- * slot for PARTIAL_PEERS, else 1024. A leaf.
+ * slot for PARTIAL_PEERS, 0 for DATAGRAM (all ones when the event list for
+ * asm-quic has no room for it), else 1024. A leaf.
  */
 LOCAL_FUNCTION libp2p_event_room
     UNWIND_END_PROLOGUE
     ldr     x1, [x0, #LIBP2P_EV_KIND]
-    cmp     x1, #LIBP2P_EVENT_RECEIVED
+    cmp     x1, #LIBP2P_EVENT_DATAGRAM
+    b.ne    7f
+    ldr     x2, [x0, #LIBP2P_EV_SIZE]
+    ldr     x3, [x27, #ST_QEV_OFF]
+    add     x3, x27, x3
+    ldr     x4, [x3, #LIBP2P_BL_SIZE]
+    sub     x4, x4, #LIBP2P_BL_FIXED
+    ldr     x5, [x3, #LIBP2P_BL_COUNT]
+    sub     x4, x4, x5
+    mov     x0, #0
+    cmp     x4, x2
+    csinv   x0, x0, xzr, hs
+    ret
+7:  cmp     x1, #LIBP2P_EVENT_RECEIVED
     b.ne    1f
     ldr     x2, [x0, #LIBP2P_EV_COUNT]
     lsl     x2, x2, #4
@@ -679,6 +803,18 @@ FUNCTION libp2p_step
     add     x0, x19, #LIBP2P_TICK_ENTROPY
     bl      libp2p_reseed
     bl      libp2p_free_kept
+    ldr     x9, [x27, #ST_QUIC_OFF]         /* QUIC: the tick of asm-quic, then the actions it gave */
+    cbz     x9, 21f
+    SCR     x26, SC_QTICK
+    ldr     x9, [x19, #LIBP2P_TICK_US]
+    str     x9, [x26, #QUIC_TICK_NOW]
+    ldr     x9, [x19, #LIBP2P_TICK_UNIX]
+    str     x9, [x26, #QUIC_TICK_UNIX]
+    add     x0, x26, #QUIC_TICK_ENTROPY
+    mov     x1, #32
+    bl      libp2p_random
+    bl      libp2p_quic_actions
+21:
 
     /* The events, while their room lasts. */
     ldr     x9, [x20, #LIBP2P_BL_OFFSET]
@@ -704,7 +840,10 @@ FUNCTION libp2p_step
     /* Timers, the drain, WAKEUP. */
 5:  str     x25, [x22, #LIBP2P_RESULT_ACCEPTED]
     bl      libp2p_timers
-    bl      libp2p_drain
+    ldr     x9, [x27, #ST_QUIC_OFF]
+    cbz     x9, 51f
+    bl      libp2p_quic_pump
+51: bl      libp2p_drain
     str     xzr, [x28, #SC_RESERVE]
     mov     x0, #LIBP2P_ACTION_WAKEUP
     mov     x1, #LIBP2P_ACT_WAKEUP_SIZE
@@ -834,6 +973,11 @@ LOCAL_FUNCTION libp2p_event
     bl      libp2p_on_partial_score
     b       99f
 23:
+    cmp     x9, #24
+    b.ne    24f
+    bl      libp2p_on_datagram
+    b       99f
+24:
 99: LEAVE   0
 END_FUNCTION libp2p_event
 
@@ -856,7 +1000,7 @@ END_FUNCTION libp2p_free_kept
 /* ---------------------------------------------------------------- Timers */
 
 /*
- * libp2p_timers(): ends connections whose upgrade ran out of time, runs the
+ * libp2p_timers(): ends TCP connections whose upgrade ran out of time, runs the
  * gossipsub heartbeat and score decay when due, and asks for a wakeup at
  * the next deadline.
  * x19 connection, x20 connections left, x21 now.
@@ -867,6 +1011,9 @@ LOCAL_FUNCTION libp2p_timers
     TABLE   x19, ST_CONN_OFF
     ldr     x20, [x27, #ST_CONN_COUNT]
 1:  cbz     x20, 3f
+    ldr     x9, [x19, #C_FLAGS]             /* asm-quic times QUIC handshakes */
+    tst     x9, #CF_QUIC
+    b.ne    2f
     ldr     w9, [x19, #C_PHASE]
     cmp     w9, #PH_DIALING
     b.lo    2f

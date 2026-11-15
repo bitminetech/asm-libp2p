@@ -1,8 +1,8 @@
 # asm-libp2p
 
-libp2p over TCP for an Ethereum consensus client, in assembly.
+libp2p over TCP and QUIC for an Ethereum consensus client, in assembly.
 
-Noise, multistream-select, yamux and mplex, streams, identify, and gossipsub v1.1 with peer scores, the IDONTWANT of v1.2, and the Extensions control message of v1.3 with the Partial Messages extension. Request/response protocols run in the application, on the stream API.
+Noise, multistream-select, yamux and mplex over TCP, QUIC v1 through asm-quic, streams, identify, and gossipsub v1.1 with peer scores, the IDONTWANT of v1.2, and the Extensions control message of v1.3 with the Partial Messages extension. Request/response protocols run in the application, on the stream API.
 
 Standard: [asm-standard@2a19d3f](https://github.com/bitminetech/asm-standard/blob/2a19d3f7fa737af1c01720b6e891703e53a682aa/ARCHITECTURE.md)
 
@@ -17,9 +17,10 @@ Standard: [asm-standard@2a19d3f](https://github.com/bitminetech/asm-standard/blo
 | [docs/reference/streams.md](docs/reference/streams.md) | Streams |
 | [docs/reference/identify.md](docs/reference/identify.md) | Identify |
 | [docs/reference/muxers.md](docs/reference/muxers.md) | yamux, mplex, and SEND actions |
+| [docs/reference/quic.md](docs/reference/quic.md) | QUIC: connections and streams of asm-quic, datagrams |
 | [docs/reference/gossipsub.md](docs/reference/gossipsub.md) | gossipsub |
 | [docs/reference/scoring.md](docs/reference/scoring.md) | Peer scoring of gossipsub v1.1 |
-| [docs/reference/shell.md](docs/reference/shell.md) | Shell: TCP sockets, clock and random bytes |
+| [docs/reference/shell.md](docs/reference/shell.md) | Shell: TCP and UDP sockets, clock and random bytes |
 | [include/libp2p.inc](include/libp2p.inc) | Constants and layouts |
 | [include/state.inc](include/state.inc) | Layouts inside the state |
 
@@ -35,9 +36,10 @@ Standard: [asm-standard@2a19d3f](https://github.com/bitminetech/asm-standard/blo
 
 | Repo | Commit | Functions used |
 |---|---|---|
-| [asm-crypto](https://github.com/bitminetech/asm-crypto) | [`0791b66`](https://github.com/bitminetech/asm-crypto/tree/0791b669f95be34b049265829d7d85864a1d769f) | `crypto_sha256`, `crypto_hkdf_extract`, `crypto_hkdf_expand`, `crypto_chacha20_aead_encrypt`, `crypto_chacha20_aead_decrypt`, `crypto_x25519`, `crypto_secp256k1_public_key`, `crypto_secp256k1_sign`, `crypto_secp256k1_verify`, `crypto_ed25519_public_key`, `crypto_ed25519_sign`, `crypto_ed25519_verify` |
-| libSystem (macOS shell) | macOS 11.0 SDK | `socket`, `setsockopt`, `getsockopt`, `fcntl`, `bind`, `listen`, `getsockname`, `connect`, `accept`, `send`, `recv`, `poll`, `close`, `__error`, `clock_gettime_nsec_np`, `getentropy` |
-| ws2_32, kernel32 and bcrypt (Windows shell) | Windows 10 | `WSAStartup`, `WSACleanup`, `WSAGetLastError`, `WSAPoll`, `socket`, `setsockopt`, `getsockopt`, `ioctlsocket`, `bind`, `listen`, `getsockname`, `connect`, `accept`, `send`, `recv`, `closesocket`, `Sleep`, `GetTickCount64`, `BCryptGenRandom` |
+| [asm-crypto](https://github.com/bitminetech/asm-crypto) | [`70753ee`](https://github.com/bitminetech/asm-crypto/tree/70753eea4f8a4e937b706d9308828c7ff3a14b40) | `crypto_sha256`, `crypto_hkdf_extract`, `crypto_hkdf_expand`, `crypto_chacha20_aead_encrypt`, `crypto_chacha20_aead_decrypt`, `crypto_x25519`, `crypto_secp256k1_public_key`, `crypto_secp256k1_sign`, `crypto_secp256k1_verify`, `crypto_ed25519_public_key`, `crypto_ed25519_sign`, `crypto_ed25519_verify` |
+| [asm-quic](https://github.com/bitminetech/asm-quic) | [`8b11514`](https://github.com/bitminetech/asm-quic/tree/8b11514604ed16552f59b2c0891720ee5dbecf6e) | `quic_state_size`, `quic_init`, `quic_step` |
+| libSystem (macOS shell) | macOS 11.0 SDK | `socket`, `setsockopt`, `getsockopt`, `fcntl`, `bind`, `listen`, `getsockname`, `connect`, `accept`, `send`, `recv`, `sendto`, `recvfrom`, `poll`, `close`, `__error`, `clock_gettime_nsec_np`, `getentropy` |
+| ws2_32, kernel32 and bcrypt (Windows shell) | Windows 10 | `WSAStartup`, `WSACleanup`, `WSAGetLastError`, `WSAPoll`, `socket`, `setsockopt`, `getsockopt`, `ioctlsocket`, `bind`, `listen`, `getsockname`, `connect`, `accept`, `send`, `recv`, `sendto`, `recvfrom`, `WSAIoctl`, `closesocket`, `Sleep`, `QueryPerformanceCounter`, `QueryPerformanceFrequency`, `GetSystemTimeAsFileTime`, `BCryptGenRandom` |
 
 ## Build tools
 
@@ -79,7 +81,7 @@ Standard: [asm-standard@2a19d3f](https://github.com/bitminetech/asm-standard/blo
 |---|---|---|
 | Linux | System calls `socket`, `setsockopt`, `getsockopt`, `bind`, `listen`, `getsockname`, `connect`, `accept4`, `sendto`, `recvfrom`, `ppoll`, `close`, `clock_gettime`, `getrandom` | Numbers and layouts from the kernel uapi headers of each ISA, as in Debian trixie |
 | macOS | libSystem functions in the Dependencies table | macOS 11.0 or later |
-| Windows | Winsock 2.2, `Sleep`, `GetTickCount64`, `BCryptGenRandom` | Windows 10 or later |
+| Windows | Winsock 2.2, `Sleep`, `QueryPerformanceCounter`, `QueryPerformanceFrequency`, `GetSystemTimeAsFileTime`, `BCryptGenRandom` | Windows 10 or later |
 
 ## Stack
 
@@ -92,13 +94,15 @@ Standard: [asm-standard@2a19d3f](https://github.com/bitminetech/asm-standard/blo
 
 | Item | Value |
 |---|---|
-| Startup | `libp2p_shell_clock` gives the time and entropy for `libp2p_init`; `libp2p_shell_init` builds the shell context; `libp2p_shell_listen` opens listening sockets |
+| Startup | `libp2p_shell_clock` gives the time and entropy for `libp2p_init`; `libp2p_shell_init` builds the shell context; `libp2p_shell_listen` opens listening sockets; `libp2p_shell_bind` opens UDP sockets for QUIC |
+| Link | `libasm-libp2p.a`, with the asm-crypto objects (sha256, hmac, chacha20, aes, x25519, p256, secp256k1, sha512, ed25519) and the asm-quic `quic.o` that `platform/<OS>/build.sh` makes |
 | Event loop | The application owns it: it calls `libp2p_step` with a fresh tick and the events since the last step, and passes the events it did not accept again |
 | Actions | After a step returns 0, `libp2p_shell_perform` does its shell actions and adds their results to the events; the application handles the other actions |
 | Wakeup | The application waits with `libp2p_shell_wait` until the WAKEUP time or socket activity |
 | Buffers | Scratch of `LIBP2P_SCRATCH_SIZE` bytes; action room of `LIBP2P_ACTIONS_MIN` bytes after the 24-byte header |
 | Message IDs | The application computes them as the consensus specs define, after MESSAGE, and judges each new message with VALIDATION |
 | Request/response | The application runs it on OPEN_STREAM, STREAM_WRITE, STREAM_CLOSE and the STREAM actions |
+| QUIC | The config sets `quic` on, with `LIBP2P_QUIC_ACCEPT` to take connections that peers dial to a bound socket; DIAL names `LIBP2P_QUIC` and a socket ID of `libp2p_shell_bind`; the application builds and reads `/ip4/.../udp/.../quic-v1` multiaddrs |
 | Partial messages | The application encodes groups, parts metadata and partial messages: it joins with PARTIAL_SUBSCRIBE, gets PARTIAL, PARTIAL_PEERS and PARTIAL_GOSSIP, and sends with PARTIAL_SEND |
 | Shutdown | `libp2p_shell_close` |
 | Concurrency | One thread at a time for a state and its shell context |

@@ -3,10 +3,12 @@ Turn node records into the peer list of tests/mainnet/node.c.
 
 Usage: python3 -I tests/mainnet/peers.py < records.txt > peers.txt
 Input: any text; every "enr:..." word is read as a record (EIP-778).
-Output: one line per record with an IPv4 address, a TCP port and a
-secp256k1 key: "IP PORT PEER_ID_HEX FORK_DIGEST_HEX". The peer ID is the
-identity multihash of the protobuf public key (libp2p peer-ids spec); the
-fork digest is the first 4 bytes of the "eth2" value, or 00000000.
+Output: for each record with an IPv4 address and a secp256k1 key, one
+line for its TCP port and one for its QUIC port (the "quic" value of the
+consensus specs), when it has them: "IP PORT PEER_ID_HEX FORK_DIGEST_HEX
+TRANSPORT", TRANSPORT tcp or quic. The peer ID is the identity multihash of
+the protobuf public key (libp2p peer-ids spec); the fork digest is the
+first 4 bytes of the "eth2" value, or 00000000.
 """
 
 import base64
@@ -39,9 +41,11 @@ def rlp_item(b, i):
 
 
 def record(text):
+    """The key and value pairs of a record whose value is bytes, not a list."""
     raw = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
     items, _ = rlp_item(raw, 0)
-    return {items[k].decode("latin-1"): items[k + 1] for k in range(2, len(items) - 1, 2)}
+    return {items[k].decode("latin-1"): items[k + 1] for k in range(2, len(items) - 1, 2)
+            if isinstance(items[k], bytes) and isinstance(items[k + 1], bytes)}
 
 
 def main():
@@ -49,10 +53,10 @@ def main():
     for text in re.findall(r"enr:([A-Za-z0-9_-]+)", sys.stdin.read()):
         try:
             r = record(text)
-        except (IndexError, ValueError):
+        except (IndexError, ValueError, TypeError):
             continue
-        ip, tcp, key = r.get("ip"), r.get("tcp"), r.get("secp256k1")
-        if not ip or len(ip) != 4 or not tcp or not key or len(key) != 33:
+        ip, tcp, quic, key = r.get("ip"), r.get("tcp"), r.get("quic"), r.get("secp256k1")
+        if not ip or len(ip) != 4 or not key or len(key) != 33 or not (tcp or quic):
             continue
         peer_id = bytes([0x00, 0x25, 0x08, 0x02, 0x12, 0x21]) + key
         if peer_id in seen:
@@ -60,7 +64,9 @@ def main():
         seen.add(peer_id)
         eth2 = r.get("eth2", b"")
         digest = eth2[:4].hex() if len(eth2) >= 4 else "00000000"
-        print(".".join(str(x) for x in ip), int.from_bytes(tcp, "big"), peer_id.hex(), digest)
+        for port, transport in ((tcp, "tcp"), (quic, "quic")):
+            if port:
+                print(".".join(str(x) for x in ip), int.from_bytes(port, "big"), peer_id.hex(), digest, transport)
 
 
 main()

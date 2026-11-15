@@ -235,19 +235,19 @@ Takes a connection slot with its receive buffer.
 ### Signature
 
 ```
-libp2p_conn_new(outbound) -> connection
+libp2p_conn_new(flags) -> connection
 ```
 
 ### Arguments
 
 | Name | Role | Type |
 |---|---|---|
-| `outbound` | input | u64: 1 for a dial, 0 for an accepted connection |
+| `flags` | input | u64: bit 0 set for a dial, clear for a connection the peer made; bit 1 set for QUIC |
 
 ### Function does
 
-- Takes a free slot and a heap block of `LIBP2P_RX_SIZE` bytes for received bytes.
-- Sets phase DIALING, the deadline now + `handshake_ms`, and no peer, stream or cursor.
+- Takes a free slot and, for TCP, a heap block of `LIBP2P_RX_SIZE` bytes for received bytes. asm-quic holds the received bytes of a QUIC connection.
+- Sets phase DIALING, the deadline now + `handshake_ms`, no peer, stream or cursor, and the flags for a dial and for QUIC.
 - Gives 0 when no slot or heap block is free.
 
 ### Function never
@@ -471,8 +471,8 @@ libp2p_conn_send_close(conn)
 
 ### Function does
 
-- Gives CLOSE with the handle of the connection.
-- When the action list has no room, sets a flag; the drain gives CLOSE later.
+- TCP: gives CLOSE with the handle of the connection. When the action list has no room, sets a flag; the drain gives CLOSE later.
+- QUIC: sets the flag; `libp2p_quic_gather` writes the asm-quic CLOSE.
 
 ### Function never
 
@@ -543,7 +543,9 @@ libp2p_on_dial(event)
 
 ### Function does
 
-- Takes a connection slot with the tag, the address and the expected peer ID, and gives DIAL with its handle.
+- Takes a connection slot of the transport of the event with the tag, the address and the expected peer ID.
+- TCP: gives DIAL with its handle.
+- QUIC: keeps the UDP socket ID and marks the dial new; `libp2p_quic_gather` writes the asm-quic DIAL.
 - Gives DIAL_FAILED with the reason LIMIT when no slot is free.
 
 ### Function never
@@ -579,8 +581,8 @@ libp2p_on_connected(event)
 
 ### Function does
 
-- For a dialing connection: sets phase SECURITY and queues the multistream header and "/noise".
-- Does nothing for a stale handle or another phase.
+- For a dialing TCP connection: sets phase SECURITY and queues the multistream header and "/noise".
+- Does nothing for a stale handle, a QUIC connection or another phase.
 
 ### Function never
 
@@ -615,8 +617,9 @@ libp2p_on_dial_failed(event)
 
 ### Function does
 
-- For a dialing connection: gives DIAL_FAILED with the reason CONNECT and frees the slot.
-- For a closing connection: frees the slot.
+- For a dialing TCP connection: gives DIAL_FAILED with the reason CONNECT and frees the slot.
+- For a closing TCP connection: frees the slot.
+- Does nothing for a QUIC connection.
 
 ### Function never
 
@@ -651,8 +654,9 @@ libp2p_on_closed(event)
 
 ### Function does
 
-- For a live connection: runs `libp2p_conn_teardown` with the reason CLOSED.
+- For a live TCP connection: runs `libp2p_conn_teardown` with the reason CLOSED.
 - Then frees the slot.
+- Does nothing for a QUIC connection.
 
 ### Function never
 
@@ -760,7 +764,7 @@ libp2p_on_received(event)
 
 - Copies as many bytes as the buffer holds, handles them with `libp2p_conn_process`, and repeats until all are taken.
 - Closes the connection when the buffer is full and nothing in it can be handled.
-- Does nothing for a stale handle or a connection that is not live.
+- Does nothing for a stale handle, a QUIC connection, or a connection that is not live.
 
 ### Function never
 
@@ -1168,7 +1172,7 @@ libp2p_peer_bind(conn)
 - With an open connection to the peer already: when each side dialled one, the connection dialled by the peer with the smaller ID stays and the other closes with DUPLICATE, with its secondary connections.
 - When the peer dialled again, the new connection becomes a secondary one, up to `LIBP2P_PEER_CONNS`; past that, or when we dialled again, it closes with DUPLICATE.
 - Brings back a retained peer with its score, or takes a peer slot, freeing the retained peer whose score ends first when none is free; closes with LIMIT when no slot can be had.
-- Gives PEER_CONNECTED and opens our gossipsub stream with `libp2p_gossip_peer_up`.
+- Gives PEER_CONNECTED with the transport of the connection, and opens our gossipsub stream with `libp2p_gossip_peer_up`.
 
 ### Function never
 
@@ -1290,7 +1294,7 @@ libp2p_peer_down(peer)
 
 ## Type `Connection`
 
-One TCP connection: its upgrade, Noise keys, muxer and streams.
+One connection: TCP with its upgrade, Noise keys and muxer, or QUIC through asm-quic; and its streams.
 
 ### Layout
 
@@ -1346,11 +1350,14 @@ One TCP connection: its upgrade, Noise keys, muxer and streams.
 | 1624 | `out_raw` | u64 | The first C_OUT_RAW bytes of C_OUT go out unencrypted |
 | 1632 | `rsts` | u64 | Resets to send for streams without a slot |
 | 1640 | `rst_ids` | 6 u32 | Up to 6 u32: yamux stream IDs or mplex headers |
+| 1664 | `quic` | u64 | QUIC: the asm-quic connection handle, or 0 before CONNECTED |
+| 1672 | `qsock` | u64 | QUIC: the UDP socket ID |
 
 ### Rules
 
 - A connection belongs to at most one peer: its first connection, or a secondary one.
 - Bytes in `out` up to `out_raw` go out as they are; later ones go in Noise transport messages.
+- A QUIC connection uses no receive buffer, Noise field, muxer field or `out` bytes: asm-quic does security and streams. It is open from the asm-quic CONNECTED action.
 
 
 ## Type `Peer`
@@ -1501,12 +1508,15 @@ The application asks for a connection.
 | 24 | `addr` | [`Address`](node.md#type-address) | Where to dial |
 | 56 | `id_len` | u64 | Bytes of the expected peer ID, 0 to `LIBP2P_MAX_PEER_ID`; 0: any peer |
 | 64 | `id` | 48 bytes | The expected peer ID |
+| 112 | `transport` | u64 | `LIBP2P_TCP` or `LIBP2P_QUIC` |
+| 120 | `socket` | u64 | QUIC: the UDP socket ID that `libp2p_shell_bind` gave |
 
 ### Rules
 
 - Kind `LIBP2P_EVENT_DIAL`, size at least `LIBP2P_EV_DIAL_SIZE`.
+- `LIBP2P_QUIC` needs QUIC on in the config.
 - It ends in PEER_CONNECTED or in the DIAL_FAILED action, with the tag.
-- A dial that reaches another peer than it names fails with PEER_ID after Noise message 2.
+- A TCP dial that reaches another peer than it names fails with PEER_ID after Noise message 2; a QUIC dial fails with PEER_ID in the TLS handshake.
 
 
 ## Type `DisconnectEvent`
@@ -1604,6 +1614,7 @@ A peer is connected: the handshake proved its ID.
 | 40 | `addr` | [`Address`](node.md#type-address) | The address of the connection |
 | 72 | `id_len` | u64 | Bytes of the peer ID |
 | 80 | `id` | 48 bytes | The peer ID |
+| 128 | `transport` | u64 | `LIBP2P_TCP` or `LIBP2P_QUIC`: the transport of the connection |
 
 ### Rules
 

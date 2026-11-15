@@ -31,7 +31,7 @@ gs=$work/test-plans/gossipsub-interop
 
 mkdir -p "$gs/asm-libp2p"
 clang -std=c11 -O2 -Wall -Wextra -Werror "$root/tests/gossipsub/node.c" "$lib/libasm-libp2p.a" \
-    "$lib"/crypto-*.o -lm -o "$gs/asm-libp2p/gossipsub-bin"
+    "$lib"/crypto-*.o "$lib/quic.o" -lm -o "$gs/asm-libp2p/gossipsub-bin"
 echo "built asm"
 grep -q '"asm":' "$gs/experiment.py" ||
     sed -i 's|^IMPLEMENTATIONS: Dict\[str, str\] = {$|&\n    "asm": "asm-libp2p/gossipsub-bin",|' "$gs/experiment.py"

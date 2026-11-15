@@ -55,20 +55,32 @@
 .set ST_HEAP_OFF, ST_TABLES + 168
 .set ST_HEAP_SIZE, ST_TABLES + 176
 .set ST_DW_OFF, ST_TABLES + 184         /* IDONTWANT rings: dontwant_slots entries for each peer */
+.set ST_QMAP_OFF, ST_TABLES + 192       /* u32 for each asm-quic stream slot: the stream index, or NONE */
+.set ST_QCMAP_OFF, ST_TABLES + 200      /* u32 for each asm-quic connection slot: the connection index, or NONE */
+.set ST_QEV_OFF, ST_TABLES + 208        /* ByteList of the events for asm-quic: 24 + LIBP2P_QUIC_EVENTS */
+.set ST_QACT_OFF, ST_TABLES + 216       /* ByteList of the actions of asm-quic: 24 + LIBP2P_QUIC_ACTIONS */
+.set ST_QUIC_OFF, ST_TABLES + 224       /* the asm-quic state, or 0 with QUIC off */
+.set ST_TABLES_END, ST_TABLES + 232     /* the fields libp2p_layout writes end here */
+.set TABLES_ROOM, 240                   /* stack bytes for those fields: a multiple of 16 */
+.if ST_TABLES_END - ST_TABLES - TABLES_ROOM > 0
+.error "TABLES_ROOM is below the table fields"
+.endif
 /* running values */
-.set ST_SEEN_HEAD, ST_TABLES + 192      /* ring: next entry to write */
-.set ST_SEEN_USED, ST_TABLES + 200
-.set ST_MC_HEAD, ST_TABLES + 208
-.set ST_MC_USED, ST_TABLES + 216
-.set ST_HEARTBEAT_AT, ST_TABLES + 224   /* ms */
-.set ST_HEARTBEATS, ST_TABLES + 232     /* heartbeat count: the mcache window */
-.set ST_DECAY_AT, ST_TABLES + 240       /* ms */
-.set ST_CONN_LIVE, ST_TABLES + 248
-.set ST_HEAP_FREE, ST_TABLES + 256      /* free list heads: 48 orders */
+.set ST_SEEN_HEAD, ST_TABLES + 232      /* ring: next entry to write */
+.set ST_SEEN_USED, ST_TABLES + 240
+.set ST_MC_HEAD, ST_TABLES + 248
+.set ST_MC_USED, ST_TABLES + 256
+.set ST_HEARTBEAT_AT, ST_TABLES + 264   /* ms */
+.set ST_HEARTBEATS, ST_TABLES + 272     /* heartbeat count: the mcache window */
+.set ST_DECAY_AT, ST_TABLES + 280       /* ms */
+.set ST_CONN_LIVE, ST_TABLES + 288
+.set ST_HEAP_FREE, ST_TABLES + 296      /* free list heads: 48 orders */
 .set ST_HEAP_ORDERS, 48
 .set ST_HEAP_USED, ST_HEAP_FREE + 8 * ST_HEAP_ORDERS
 .set ST_KEPT_RPC, ST_HEAP_USED + 8      /* heap offset of the first RPC block kept until the next step, or 0 */
-.set ST_FIXED, ST_KEPT_RPC + 8
+.set ST_QACT_DONE, ST_KEPT_RPC + 8      /* bytes of the asm-quic actions handled */
+.set ST_QUIC_WAKE, ST_QACT_DONE + 8     /* microseconds: the WAKEUP of the last quic_step */
+.set ST_FIXED, ST_QUIC_WAKE + 8
 
 /* ---------------------------------------------------------------- Heap blocks (buddy allocator) */
 
@@ -139,7 +151,9 @@
 .set C_OUT_RAW, 1624                    /* the first C_OUT_RAW bytes of C_OUT go out unencrypted */
 .set C_RSTS, 1632                       /* yamux stream IDs to reset: count, then 6 u32 */
 .set C_RST_IDS, 1640
-.set C_SIZE, 1664
+.set C_QUIC, 1664                       /* QUIC: the asm-quic connection handle, or 0 before CONNECTED */
+.set C_QSOCK, 1672                      /* QUIC: the UDP socket ID */
+.set C_SIZE, 1680
 
 /* Connection phases. */
 .set PH_FREE, 0
@@ -161,7 +175,9 @@
 .set CF_TRANSPORT, 64                   /* Noise transport keys in use */
 .set CF_MPLEX_TRIED, 128                /* yamux was refused, mplex proposed */
 .set CF_REPORTED, 256                   /* PEER_CONNECTED or DIAL_FAILED was given */
-.set CF_NEED_CLOSE, 512                 /* a CLOSE action is still to be written */
+.set CF_NEED_CLOSE, 512                 /* a CLOSE action, or for QUIC an asm-quic CLOSE event, is still to be written */
+.set CF_QUIC, 1024                      /* a QUIC connection: asm-quic does security and streams */
+.set CF_QDIAL, 2048                     /* QUIC: the asm-quic DIAL event is still to be written */
 
 /* ---------------------------------------------------------------- Stream slot */
 
@@ -196,7 +212,8 @@
 .set S_RPC_VARINT, 336                  /* the length prefix being read */
 .set S_RPC_SHIFT, 344
 .set S_TARGET, 352                      /* the kind it becomes once negotiated */
-.set S_SIZE, 360
+.set S_QFLIGHT, 360                     /* QUIC: bytes written to asm-quic and not yet acknowledged */
+.set S_SIZE, 368
 
 /* Stream kinds. */
 .set SK_NEGOTIATING, 0
@@ -216,6 +233,7 @@
 .set SF_REPORTED, 128                   /* the application knows the stream */
 .set SF_DEAD, 256                       /* reset or both sides closed: free after the drain */
 .set SF_GOT_HEADER, 512                 /* the multistream header of the stream came */
+/* On a QUIC connection, S_ID is the asm-quic stream handle, 0 until STREAM_OPENED; SF_SYN asks for OPEN_STREAM. */
 
 /* ---------------------------------------------------------------- Peer slot */
 
@@ -378,7 +396,10 @@
 .set SC_LIST_SIZE, 262144
 .set SC_IDS, SC_LIST + SC_LIST_SIZE     /* 8192 pairs: the address of a message ID, then its length */
 .set SC_IDS_SIZE, 131072
-.set SC_TOTAL, SC_IDS + SC_IDS_SIZE
+.set SC_QTICK, SC_IDS + SC_IDS_SIZE     /* the asm-quic Tick: QUIC_TICK_SIZE bytes */
+.set SC_QRESULT, SC_QTICK + QUIC_TICK_SIZE   /* its StepResult */
+.set SC_QSCRATCH, SC_QRESULT + 8        /* the scratch of quic_step */
+.set SC_TOTAL, SC_QSCRATCH + QUIC_SCRATCH_SIZE
 .if SC_TOTAL - LIBP2P_SCRATCH_SIZE
 .error "SC_TOTAL differs from LIBP2P_SCRATCH_SIZE"
 .endif

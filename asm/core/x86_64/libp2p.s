@@ -1,11 +1,11 @@
 /*
  * asm-libp2p for x86-64 (System V AMD64 psABI), AT&T syntax: libp2p over
- * TCP for an Ethereum consensus client: Noise, multistream-select, yamux,
- * mplex, streams and gossipsub.
+ * TCP and QUIC for an Ethereum consensus client: Noise, multistream-select,
+ * yamux, mplex, the glue to asm-quic, streams and gossipsub.
  * Requirements: docs/reference/. Layouts: include/libp2p.inc, include/state.inc.
  *
  * One object: this file includes the other parts of the core. Hashes,
- * ciphers and keys go through asm-crypto. Baseline x86-64 instructions only.
+ * ciphers and keys go through asm-crypto; QUIC goes through asm-quic. Baseline x86-64 instructions only.
  * The functions and their steps follow the ARM64 core one for one; frame.inc
  * maps its registers. Every call may change rax, rcx, rdx, rsi, rdi, r8-r11
  * and the xmm registers.
@@ -18,6 +18,7 @@
 .include "sha512.inc"
 .include "ed25519.inc"
 .include "libp2p.inc"
+.include "quic.inc"
 .include "state.inc"
 .include "platform.inc"
 .include "frame.inc"
@@ -503,3 +504,4 @@ END_FUNCTION libp2p_alloc_slot
 .include "stream.s"
 .include "mux.s"
 .include "gossip.s"
+.include "quic.s"

@@ -14,24 +14,27 @@
 
 ## Function `libp2p_observed`
 
-Writes the binary multiaddr of a TCP address.
+Writes the binary multiaddr of a TCP or QUIC address.
 
 ### Signature
 
 ```
-libp2p_observed(dst, addr) -> length
+libp2p_observed(dst, addr, quic) -> length
 ```
 
 ### Arguments
 
 | Name | Role | Type |
 |---|---|---|
-| `dst` | output | up to 20 bytes |
+| `dst` | output | up to 23 bytes |
 | `addr` | input | [`Address`](node.md#type-address) |
+| `quic` | input | u64: nonzero for a QUIC connection |
 
 ### Function does
 
-- Writes /ip4 (code 4, 4 bytes) or /ip6 (code 41, 16 bytes), then /tcp (code 6, the port big endian), one byte at a time.
+- Writes /ip4 (code 4, 4 bytes) or /ip6 (code 41, 16 bytes), one byte at a time.
+- Then for TCP: /tcp (code 6, the port big endian).
+- Then for QUIC: /udp (code 273, the port big endian) and /quic-v1 (code 0x01cc).
 
 ### Function never
 
@@ -47,7 +50,7 @@ libp2p_observed(dst, addr) -> length
 - Role: L0.
 - Symbol: `libp2p_observed`, local to its object.
 - Convention: the core ABI for each ISA (ARCHITECTURE.md section 6). It returns the length, not a status.
-- Argument order: `dst`, `addr`.
+- Argument order: `dst`, `addr`, `quic`.
 
 ## Function `libp2p_identify`
 
@@ -67,7 +70,7 @@ libp2p_identify(stream)
 
 ### Function does
 
-- Queues one Identify protobuf with its varint length: publicKey (1), observedAddr (4, the address of the connection), protocols (3: "/ipfs/id/1.0.0", "/meshsub/1.3.0" when `gossipsub_v13` is on, "/meshsub/1.2.0" when `gossipsub_v12` is on, "/meshsub/1.1.0" and the protocols of the config), then protocolVersion (5) and agentVersion (6) when the config sets them.
+- Queues one Identify protobuf with its varint length: publicKey (1), observedAddr (4, the address of the connection, with /udp and /quic-v1 on QUIC), protocols (3: "/ipfs/id/1.0.0", "/meshsub/1.3.0" when `gossipsub_v13` is on, "/meshsub/1.2.0" when `gossipsub_v12` is on, "/meshsub/1.1.0" and the protocols of the config), then protocolVersion (5) and agentVersion (6) when the config sets them.
 - Then marks the stream to close after the message.
 - Closes the stream without a message when the heap has no block for it.
 

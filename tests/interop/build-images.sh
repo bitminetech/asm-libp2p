@@ -1,8 +1,8 @@
 #!/bin/sh
 # Build the Docker images of transport-interop: the asm-libp2p node for one
-# Linux ISA, and the TCP implementations of libp2p/test-plans.
+# Linux ISA, and the TCP and quic-v1 implementations of libp2p/test-plans.
 # Usage: tests/interop/build-images.sh ISA WORK_DIR [IMPLEMENTATION ...]
-#   ISA: x86_64, arm64 or riscv64. Implementations by image name; none: all 16.
+#   ISA: x86_64, arm64 or riscv64. Implementations by image name; none: all 17.
 #
 # The asm-libp2p image is asm-libp2p-interop-<ISA>, from build/linux-<ISA>/node
 # (tests/runner/docker.sh builds it). The implementation images keep their
@@ -38,8 +38,13 @@ impl=$work/test-plans/transport-interop/impl
 # The c image: GitHub now names the WjCryptLib archive folder after its commit.
 sed -i.orig 's/mv WjCryptLib-master\/\* external\/wjcryptlib\/ && rm -rf wjcryptlib.zip WjCryptLib-master/mv WjCryptLib-*\/* external\/wjcryptlib\/ \&\& rm -rf wjcryptlib.zip WjCryptLib-*/' \
     "$impl/c/v0.0.1/Makefile"
+# The eth-p2p-z image: its Dockerfile fetches an x86-64 zig, and test-plans pins -Dcpu=x86_64. On
+# an ARM64 host that zig runs under emulation and fails ("unknown target CPU 'athlon-xp'"). The
+# zig of the host ISA with the baseline CPU builds on both, and keeps the binary portable.
+zarch=$(uname -m)
+[ "$zarch" = arm64 ] && zarch=aarch64
 for d in go/v0.46 go/v0.47 go/v0.48 dotnet/v1.0 js/v1.x js/v2.x js/v3.x nim/v1.14 nim/v2.4 python/v0.x jvm/v1.3 \
-         c/v0.0.1 rust/v0.53 rust/v0.54 rust/v0.55 rust/v0.56; do
+         c/v0.0.1 rust/v0.53 rust/v0.54 rust/v0.55 rust/v0.56 eth-p2p-z/v0.0.1; do
     name=$(sed -n 's/^image_name := //p' "$impl/$d/Makefile")
     [ "${d%%/*}" = js ] && name=node-$name    # the js Makefiles tag node-<image_name>
     if [ $# -gt 0 ]; then
@@ -54,6 +59,16 @@ for d in go/v0.46 go/v0.47 go/v0.48 dotnet/v1.0 js/v1.x js/v2.x js/v3.x nim/v1.1
         sed -i.orig -e "s|^FROM lukemathwalker/cargo-chef:0.1.68-rust-bullseye as chef|FROM $chef as chef|" \
             -e 's|^FROM debian:bullseye$|FROM debian:bookworm|' "$src/interop-tests/Dockerfile.native"
         docker build -q -t "$name" -f "$src/interop-tests/Dockerfile.native" "$src" >/dev/null
+    elif [ "$d" = eth-p2p-z/v0.0.1 ]; then
+        sha=$(sed -n 's/^commitSha := //p' "$impl/$d/Makefile")
+        src=$impl/$d/eth-p2p-z-$sha
+        if [ ! -d "$src" ]; then
+            curl -fsSL -o "$impl/$d/eth-p2p-z-$sha.zip" "https://github.com/zen-eth/eth-p2p-z/archive/$sha.zip"
+            (cd "$impl/$d" && unzip -q -o "eth-p2p-z-$sha.zip")
+        fi
+        sed -i.orig -e 's/ -Dcpu=[a-z0-9_]*//' -e 's/-Dlibxev-backend=epoll/-Dlibxev-backend=epoll -Dcpu=baseline/' \
+            -e "s/zig-x86_64-linux/zig-$zarch-linux/g" "$src/interop/transport/Dockerfile"
+        docker build -q -t "$name" -f "$src/interop/transport/Dockerfile" --build-arg ZIG_LOG_LEVEL=warn "$src" >/dev/null
     else
         (cd "$impl/$d" && make image.json > build.log 2>&1) || { echo "FAIL $name: see $impl/$d/build.log"; exit 1; }
     fi

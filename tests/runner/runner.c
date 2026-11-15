@@ -5,7 +5,8 @@
  *
  * Nodes run in memory. The runner plays the shell: it carries the bytes of
  * each connection to the other node, and answers DIAL, ADOPT, REFUSE, SEND
- * and CLOSE as a socket layer would. Keys, entropy and time are fixed, so
+ * and CLOSE as a socket layer would; it carries each SEND_DATAGRAM to the
+ * node of its UDP address, and may drop every n-th. Keys, entropy and time are fixed, so
  * each scenario is deterministic. Each scenario checks its outcomes, then
  * prints a transcript digest: FNV-1a 64 over every action of every node, in
  * order. Every ISA must give the digests of the DIGESTS table (recorded on
@@ -121,7 +122,7 @@ typedef struct {
 } stream_rec;
 
 typedef struct {
-    uint64_t handle, direction, id_len;
+    uint64_t handle, direction, id_len, transport;
     uint8_t id[48];
     int up;
 } peer_rec;
@@ -142,6 +143,7 @@ typedef struct {
 
 typedef struct {
     int used, silent, dead;   /* silent: dials to it never connect; dead: it gets no bytes */
+    int quic;                 /* QUIC on: it gets datagrams at its UDP address */
     void *state, *scratch;
     uint8_t *events, *actions;
     uint64_t now, state_size;
@@ -177,6 +179,21 @@ typedef struct {
 } dial_rec;
 static dial_rec dials[MAX_LINKS];
 static uint64_t next_token = 1000;
+
+/* QUIC: the nodes made next have QUIC on; every n-th datagram is lost. */
+static int with_quic;
+static uint64_t datagrams, drop_every, dropped;
+
+/* The UDP address of node i: 10.0.0.(i + 1), port 7000 + i. */
+static libp2p_addr udp_addr(int i) {
+    libp2p_addr a;
+    memset(&a, 0, sizeof a);
+    a.family = 4;
+    a.port = (uint64_t)(7000 + i);
+    a.ip[0] = 10;
+    a.ip[3] = (uint8_t)(i + 1);
+    return a;
+}
 
 static void *ev_add(node *n, uint64_t kind, uint64_t size) {
     uint64_t *h = (uint64_t *)n->events;
@@ -291,6 +308,17 @@ static void config_for(config_rec *cfg, int index, const node_opts *o) {
     c->max_idontwant_length = 10;                           /* MaxIDontWantLength */
     c->gossipsub_v13 = (uint64_t)o->partial;
     c->partial_messages = (uint64_t)o->partial;
+    if (with_quic) {
+        c->quic = LIBP2P_QUIC_ON | LIBP2P_QUIC_ACCEPT;
+        c->quic_heap = 1 << 22;
+        c->quic_idle_ms = 30000;
+        c->quic_keep_alive_ms = 10000;
+        c->quic_max_data = 1 << 22;
+        c->quic_stream_data = 1 << 20;
+        c->quic_max_streams = 64;
+        c->quic_sent = 256;
+        c->quic_window = 1 << 18;
+    }
 }
 
 static void make_node(int index, const node_opts *o) {
@@ -315,6 +343,7 @@ static void make_node(int index, const node_opts *o) {
     ((uint64_t *)n->events)[1] = 24;
     n->now = 1000;
     n->verdict = LIBP2P_ACCEPT;
+    n->quic = with_quic;
 }
 
 static void free_nodes(void) {
@@ -331,6 +360,7 @@ static void free_nodes(void) {
     memset(links, 0, sizeof links);
     memset(dials, 0, sizeof dials);
     next_token = 1000;
+    datagrams = drop_every = dropped = 0;
 }
 
 static const uint8_t *peer_id(int index, uint64_t *len) {
@@ -350,6 +380,19 @@ static void dial(int a, int b, int id_of) {
     const uint8_t *id = peer_id(id_of, &len);
     d->id_len = len;
     memcpy(d->id, id, len);
+}
+
+/* Node a dials node b over QUIC, expecting the peer ID of node id_of. */
+static void dial_quic(int a, int b, int id_of) {
+    ev_dial *d = ev_add(&nodes[a], EV_DIAL, sizeof *d);
+    d->tag = (uint64_t)(100 + b);
+    d->addr = udp_addr(b);
+    uint64_t len;
+    const uint8_t *id = peer_id(id_of, &len);
+    d->id_len = len;
+    memcpy(d->id, id, len);
+    d->transport = LIBP2P_QUIC;
+    d->socket = 0;
 }
 
 static stream_rec *stream_of(node *n, uint64_t h, int make) {
@@ -481,6 +524,22 @@ static void shell_action(int i, uint8_t *p) {
         e->value = a->count;
         break;
     }
+    case ACT_SEND_DATAGRAM: {
+        act_datagram *a = (act_datagram *)p;
+        int b = (int)a->addr.port - 7000;
+        datagrams++;
+        if (b < 0 || b >= MAX_NODES || !nodes[b].used || !nodes[b].quic || nodes[b].dead) break;
+        if (drop_every && datagrams % drop_every == 0) {
+            dropped++;
+            break;
+        }
+        ev_datagram *e = ev_add(&nodes[b], EV_DATAGRAM, sizeof *e + a->count);
+        e->socket = 0;
+        e->addr = udp_addr(i);
+        e->count = a->count;
+        memcpy(e->data, a->data, a->count);
+        break;
+    }
     case ACT_CLOSE: {
         act_send *a = (act_send *)p;
         int o;
@@ -513,6 +572,7 @@ static void app_action(int i, uint8_t *p) {
                 n->peers[k].up = 1;
                 n->peers[k].handle = a->peer;
                 n->peers[k].direction = a->direction;
+                n->peers[k].transport = a->transport;
                 n->peers[k].id_len = a->id_len;
                 memcpy(n->peers[k].id, a->id, a->id_len);
                 break;
@@ -652,6 +712,8 @@ static int step(int i) {
     libp2p_tick t;
     t.now = n->now;
     for (int k = 0; k < 32; k++) t.entropy[k] = (uint8_t)(k * 13 + n->now + (uint64_t)i * 7);
+    t.us = n->now * 1000;
+    t.unix_time = 1794700800 + n->now / 1000;        /* 2026-11-15 */
     uint64_t *ah = (uint64_t *)n->actions;
     ah[0] = ACT_ROOM;
     uint64_t result = 0;
@@ -671,7 +733,7 @@ static int step(int i) {
     while (p < end) {
         libp2p_header *h = (libp2p_header *)p;
         fnv(p, h->size);
-        if (h->kind <= ACT_CLOSE) shell_action(i, p);
+        if (h->kind <= ACT_CLOSE || h->kind == ACT_SEND_DATAGRAM) shell_action(i, p);
         else app_action(i, p);
         if (h->kind != ACT_WAKEUP) count++;
         p += h->size;
@@ -692,6 +754,12 @@ static void run(int rounds, uint64_t dt, int until_idle) {
             }
         if (until_idle && !busy) break;
     }
+}
+
+/* Rounds until the nodes are idle; with lost datagrams, 4 s, for the retransmission timers of QUIC. */
+static void settle(void) {
+    if (drop_every) run(400, 10, 0);
+    else run(60, 10, 1);
 }
 
 static void open_stream(int a, int b, int nprotos, const char *const *protos, uint64_t tag) {
@@ -877,6 +945,24 @@ static void s_config(void) {
     BAD(bad.p[0].len = 0);
     BAD(bad.p[1].bytes[3] = '\n');
     BAD(bad.c.size = sizeof bad.c + sizeof(libp2p_proto));
+    BAD(bad.c.quic = LIBP2P_QUIC_ACCEPT);
+    BAD(bad.c.quic = 4);
+    /* QUIC on: its own fields, and the fields of the asm-quic config. */
+    with_quic = 1;
+    config_rec q;
+    config_for(&q, 0, &o);
+    with_quic = 0;
+    uint64_t qsize = 0;
+    CHECK(call(F_STATE_SIZE, &q, &qsize, 0, 0, 0, 0) == LIBP2P_OK && qsize > size, "valid QUIC config");
+    fnv(&qsize, 8);
+    cfg = q;
+    BAD(bad.c.quic_window = 65535);
+    BAD(bad.c.quic_window = (1u << 30) + 1);
+    BAD(bad.c.quic_heap = 3 << 16);
+    BAD(bad.c.quic_sent = 15);
+    BAD((bad.c.max_connections = 65536, bad.c.max_peers = 65536));
+    BAD(bad.c.handshake_ms = 1ull << 40);
+    config_for(&cfg, 0, &o);
 #undef BAD
     void *state = xmalloc(size);
     ((uint64_t *)state)[0] = size - 1;
@@ -893,12 +979,17 @@ static void s_config(void) {
     free(state);
 }
 
-/* Two nodes connect, open a stream with a fallback protocol, echo, half-close, then disconnect. */
-static void connect_pair(int ka, int kb, uint64_t ma, uint64_t mb) {
+/*
+ * Two nodes connect (over QUIC when quic is 1), open a stream with a fallback
+ * protocol, echo, half-close, then disconnect.
+ */
+static void connect_pair_on(int ka, int kb, uint64_t ma, uint64_t mb, int quic) {
     node_opts oa = {ka, ma, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, ob = {kb, mb, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    with_quic = quic;
     make_node(0, &oa);
     make_node(1, &ob);
-    dial(0, 1, 1);
+    if (quic) dial_quic(0, 1, 1);
+    else dial(0, 1, 1);
     run(60, 10, 1);
     CHECK(peers_up(&nodes[0]) == 1 && peers_up(&nodes[1]) == 1, "connected %d %d", peers_up(&nodes[0]),
           peers_up(&nodes[1]));
@@ -907,6 +998,8 @@ static void connect_pair(int ka, int kb, uint64_t ma, uint64_t mb) {
     if (!h01 || !h10) return;
     CHECK(peer_of(&nodes[0], h01)->direction == 1 && peer_of(&nodes[1], h10)->direction == 0,
           "directions");
+    CHECK(peer_of(&nodes[0], h01)->transport == (uint64_t)quic && peer_of(&nodes[1], h10)->transport == (uint64_t)quic,
+          "transports");
     const char *protos[] = {"/nope/1.0.0", "/test/1.0.0"};
     open_stream(0, 1, 2, protos, 7);
     run(60, 10, 1);
@@ -929,10 +1022,17 @@ static void connect_pair(int ka, int kb, uint64_t ma, uint64_t mb) {
     CHECK(!sa->reset && !sb->reset, "no STREAM_RESET for a stream closed both ways");
 }
 
-static void s_yamux(void) { connect_pair(LIBP2P_KEY_ED25519, LIBP2P_KEY_ED25519, 1, 1); }
-static void s_mplex(void) { connect_pair(LIBP2P_KEY_SECP256K1, LIBP2P_KEY_ED25519, 2, 2); }
-static void s_fallback(void) { connect_pair(LIBP2P_KEY_SECP256K1, LIBP2P_KEY_SECP256K1, 3, 2); }
-static void s_mplex_first(void) { connect_pair(LIBP2P_KEY_ED25519, LIBP2P_KEY_SECP256K1, 2, 3); }
+static void s_yamux(void) { connect_pair_on(LIBP2P_KEY_ED25519, LIBP2P_KEY_ED25519, 1, 1, 0); }
+static void s_mplex(void) { connect_pair_on(LIBP2P_KEY_SECP256K1, LIBP2P_KEY_ED25519, 2, 2, 0); }
+static void s_fallback(void) { connect_pair_on(LIBP2P_KEY_SECP256K1, LIBP2P_KEY_SECP256K1, 3, 2, 0); }
+static void s_mplex_first(void) { connect_pair_on(LIBP2P_KEY_ED25519, LIBP2P_KEY_SECP256K1, 2, 3, 0); }
+
+/* QUIC: the same with Ed25519 keys, then with secp256k1 and Ed25519 keys. */
+static void s_quic(void) {
+    connect_pair_on(LIBP2P_KEY_ED25519, LIBP2P_KEY_ED25519, 3, 3, 1);
+    free_nodes();
+    connect_pair_on(LIBP2P_KEY_SECP256K1, LIBP2P_KEY_ED25519, 3, 3, 1);
+}
 
 /* No shared muxer: the dial fails in the upgrade, and no node reports a peer. */
 static void s_no_muxer(void) {
@@ -957,28 +1057,34 @@ static void s_peer_id(void) {
     CHECK(nodes[0].connected_events == 0 && nodes[1].connected_events == 0, "no peer: %d %d %d", nodes[0].connected_events, nodes[1].connected_events, nodes[1].disconnected_events);
 }
 
-/* Refused protocols, a reset, and 1 MiB through each muxer's flow control. */
-static void streams_on(uint64_t muxers) {
+/*
+ * Refused protocols, a reset, and 1 MiB through each muxer's flow control;
+ * over QUIC (quic 1), through the window of quic_window bytes in flight,
+ * which STREAM_ACKED opens again.
+ */
+static void streams_on(uint64_t muxers, int quic) {
     node_opts o = {LIBP2P_KEY_ED25519, muxers, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    with_quic = quic;
     make_node(0, &o);
     make_node(1, &o);
-    dial(0, 1, 1);
-    run(60, 10, 1);
+    if (quic) dial_quic(0, 1, 1);
+    else dial(0, 1, 1);
+    settle();
     const char *nope[] = {"/nope/1.0.0"};
     open_stream(0, 1, 1, nope, 1);
-    run(60, 10, 1);
+    settle();
     CHECK(nodes[0].stream_failed[5] == 1, "STREAM_FAILED protocol");
     const char *echo[] = {"/echo/1.0.0"};
     open_stream(0, 1, 1, echo, 2);
-    run(60, 10, 1);
+    settle();
     stream_rec *sa = stream_by_tag(0, 2), *sb = inbound_stream(1);
     CHECK(sa && sb && sb->protocol == 1, "echo stream");
     if (!sa || !sb) return;
     stream_event(0, EV_STREAM_RESET, sa->handle);
-    run(60, 10, 1);
+    settle();
     CHECK(sb->reset, "B saw the reset");
     open_stream(0, 1, 1, echo, 3);
-    run(60, 10, 1);
+    settle();
     sa = stream_by_tag(0, 3);
     sb = inbound_stream(1);
     CHECK(sa && sb && !sb->reset, "second stream");
@@ -987,13 +1093,38 @@ static void streams_on(uint64_t muxers) {
     for (size_t k = 0; k < sizeof big; k++) big[k] = (uint8_t)(k * 7 + (k >> 9));
     for (size_t off = 0; off < sizeof big; off += 65536) write_stream(0, sa->handle, big + off, 65536);
     stream_event(0, EV_STREAM_CLOSE, sa->handle);
-    run(400, 10, 1);
+    run(quic ? 2000 : 400, 10, !quic);
     CHECK(sb->len == sizeof big && !memcmp(sb->data, big, sizeof big) && sb->eof, "1 MiB in order, got %zu",
           sb->len);
 }
 
-static void s_streams_yamux(void) { streams_on(1); }
-static void s_streams_mplex(void) { streams_on(2); }
+static void s_streams_yamux(void) { streams_on(1, 0); }
+static void s_streams_mplex(void) { streams_on(2, 0); }
+static void s_quic_streams(void) { streams_on(3, 1); }
+
+/* QUIC with every 7th datagram lost: the connection, a stream and 1 MiB still go through. */
+static void s_quic_loss(void) {
+    drop_every = 7;
+    streams_on(3, 1);
+    printf("  datagrams: %llu sent, %llu lost\n", (unsigned long long)datagrams, (unsigned long long)dropped);
+    CHECK(dropped > 0, "no datagram was lost");
+    fnv(&dropped, 8);
+}
+
+/* QUIC: a dial that reaches another peer than it names fails with PEER_ID; a node that never answers, with CONNECT. */
+static void s_quic_dial_fails(void) {
+    node_opts o = {LIBP2P_KEY_ED25519, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    with_quic = 1;
+    for (int i = 0; i < 4; i++) make_node(i, &o);
+    nodes[3].dead = 1;
+    dial_quic(0, 1, 2);
+    dial_quic(0, 3, 3);
+    run(200, 100, 0);
+    CHECK(nodes[0].dial_failed[3] == 1, "DIAL_FAILED peer ID");
+    CHECK(nodes[0].dial_failed[1] == 1, "DIAL_FAILED connect");
+    CHECK(nodes[0].connected_events == 0 && nodes[1].connected_events == 0, "no peer: %d %d",
+          nodes[0].connected_events, nodes[1].connected_events);
+}
 
 /* Timeouts: an unanswered dial gives CONNECT; a peer that never answers gives HANDSHAKE. */
 static void s_timeout(void) {
@@ -1037,7 +1168,7 @@ static void s_errors(void) {
     make_node(0, &o);
     node *n = &nodes[0];
     uint8_t *before = xmalloc(n->state_size);
-    libp2p_tick t = {2000, {0}};
+    libp2p_tick t = {2000, {0}, 2000000, 1794700802};
     struct { int kind; uint64_t size; uint64_t f2; } cases[] = {
         {0, 24, 0}, {20, 24, 0}, {EV_DISCONNECT, 0, 0}, {EV_DISCONNECT, 20, 0}, {EV_DISCONNECT, 1 << 30, 0},
         {EV_STREAM_WRITE, 32, 64}, {EV_SUBSCRIBE, 24, 300}, {EV_DIAL, 112, 0},
@@ -1075,6 +1206,42 @@ static void s_errors(void) {
     st = call(F_STEP, n->state, &t, n->events, n->scratch, n->actions, &result);
     CHECK(st == LIBP2P_OK && result == 1, "the subscription then goes through");
     free(before);
+    /* QUIC events: a QUIC dial and a datagram need QUIC on; a transport above QUIC, a count past the event and a
+       datagram above 65535 bytes are invalid. */
+    with_quic = 1;
+    make_node(1, &o);
+    with_quic = 0;
+    for (int c = 0; c < 7; c++) {
+        node *m = c < 2 ? &nodes[0] : &nodes[1];
+        ((uint64_t *)m->events)[2] = 0;
+        if (c == 0 || c == 2 || c == 3) {
+            ev_dial *d = ev_add(m, EV_DIAL, sizeof *d);
+            d->addr = udp_addr(0);
+            d->transport = c == 0 ? LIBP2P_QUIC : c == 2 ? 2 : LIBP2P_TCP;
+            if (c == 3) d->addr.port = 70000;
+        } else {
+            uint64_t count = c == 6 ? 65536 : 8;
+            ev_datagram *g = ev_add(m, EV_DATAGRAM, sizeof *g + count);
+            g->addr = udp_addr(0);
+            g->count = c == 4 ? 16 : count;
+            if (c == 5) g->addr.family = 5;
+        }
+        uint8_t *was = xmalloc(m->state_size);
+        memcpy(was, m->state, m->state_size);
+        ((uint64_t *)m->actions)[0] = ACT_ROOM;
+        st = call(F_STEP, m->state, &t, m->events, m->scratch, m->actions, &result);
+        CHECK(st == LIBP2P_INVALID_EVENT, "QUIC case %d gave %llu", c, (unsigned long long)st);
+        CHECK(!memcmp(was, m->state, m->state_size), "QUIC case %d changed the state", c);
+        fnv(&st, 8);
+        free(was);
+    }
+    ((uint64_t *)nodes[1].events)[2] = 0;
+    ev_datagram *g = ev_add(&nodes[1], EV_DATAGRAM, sizeof *g + 8);
+    g->addr = udp_addr(0);
+    g->count = 8;
+    ((uint64_t *)nodes[1].actions)[0] = ACT_ROOM;
+    st = call(F_STEP, nodes[1].state, &t, nodes[1].events, nodes[1].scratch, nodes[1].actions, &result);
+    CHECK(st == LIBP2P_OK && result == 1, "a datagram of garbage goes to asm-quic");
 }
 
 /* Both nodes dial each other at once: one connection stays, each side sees one peer. */
@@ -1106,12 +1273,20 @@ static void s_limits(void) {
           nodes[3].dial_failed[2] == 1, "the third dial failed");
 }
 
-/* Six nodes in a graph: every message reaches every node once; a rejecting node does not forward. */
-static void gossip_on(uint64_t d, uint64_t d_low, uint64_t d_high, uint64_t d_lazy) {
+/*
+ * Six nodes in a graph: every message reaches every node once; a rejecting
+ * node does not forward. quic: 0 TCP edges, 1 QUIC edges, 2 every other
+ * edge QUIC.
+ */
+static void gossip_on(uint64_t d, uint64_t d_low, uint64_t d_high, uint64_t d_lazy, int quic) {
     node_opts o = {LIBP2P_KEY_SECP256K1, 0, 0, d, d_low, d_high, d_lazy, 0, 0, 0, 0, 0};
+    with_quic = quic != 0;
     for (int i = 0; i < 6; i++) make_node(i, &o);
     static const int edges[][2] = {{0, 1}, {0, 2}, {1, 2}, {1, 3}, {2, 4}, {3, 4}, {3, 5}, {4, 5}};
-    for (size_t k = 0; k < sizeof edges / sizeof edges[0]; k++) dial(edges[k][0], edges[k][1], edges[k][1]);
+    for (size_t k = 0; k < sizeof edges / sizeof edges[0]; k++) {
+        if (quic == 1 || (quic == 2 && k % 2)) dial_quic(edges[k][0], edges[k][1], edges[k][1]);
+        else dial(edges[k][0], edges[k][1], edges[k][1]);
+    }
     run(80, 10, 1);
     for (int i = 0; i < 6; i++) topic_event(i, EV_SUBSCRIBE, "/eth2/00000000/beacon_block/ssz_snappy");
     run(40, 100, 0);                                  /* heartbeats build the meshes */
@@ -1140,7 +1315,9 @@ static void gossip_on(uint64_t d, uint64_t d_low, uint64_t d_high, uint64_t d_la
     CHECK(nodes[0].peer_topics == before - 1, "node 0 saw node 2 leave");
 }
 
-static void s_gossip(void) { gossip_on(0, 0, 0, 0); }
+static void s_gossip(void) { gossip_on(0, 0, 0, 0, 0); }
+static void s_quic_gossip(void) { gossip_on(0, 0, 0, 0, 1); }
+static void s_quic_mixed(void) { gossip_on(0, 0, 0, 0, 2); }
 
 /*
  * A peer that dials again: node 2 has node 0's key, so node 1 sees one peer
@@ -1233,7 +1410,7 @@ static void s_scoring(void) {
     CHECK(seen_with(0, "from-1") == 0, "node 0 gets nothing: %d", seen_with(0, "from-1"));
 }
 
-static void s_gossip_lazy(void) { gossip_on(1, 1, 2, 4); }
+static void s_gossip_lazy(void) { gossip_on(1, 1, 2, 4, 0); }
 
 /* ---------------------------------------------------------------- Main */
 
@@ -1408,26 +1585,32 @@ static void s_partial(void) {
 }
 
 static const scenario_rec SCENARIOS[] = {
-    {"config", s_config, 0x142bdebb1cf81fdfull},
-    {"yamux", s_yamux, 0xe787b23a61e8b42full},
-    {"mplex", s_mplex, 0x00807cdbc0cdadbbull},
-    {"fallback", s_fallback, 0x228a1d4b2ba9c0b8ull},
-    {"mplex_first", s_mplex_first, 0xdd71ff74aa391643ull},
+    {"config", s_config, 0xf72f373fae402ed4ull},
+    {"yamux", s_yamux, 0x164b55a2c482c5bfull},
+    {"mplex", s_mplex, 0x549ad8c98d9c9fbbull},
+    {"fallback", s_fallback, 0xb627b36b0ab9b758ull},
+    {"mplex_first", s_mplex_first, 0x5a3736514fbe2d03ull},
     {"no_muxer", s_no_muxer, 0x9bcf6f37f9f50903ull},
     {"peer_id", s_peer_id, 0x3565954a455e52c8ull},
-    {"streams_yamux", s_streams_yamux, 0x500067afac691a78ull},
-    {"streams_mplex", s_streams_mplex, 0xbbfbdc9efee4994dull},
+    {"streams_yamux", s_streams_yamux, 0xf7f7f5109b842668ull},
+    {"streams_mplex", s_streams_mplex, 0x628872d9ca9d0b4dull},
     {"timeout", s_timeout, 0xffe7d7d1ebefd1d2ull},
     {"garbage", s_garbage, 0x72e765f2cdbb24c0ull},
-    {"errors", s_errors, 0x66d7d610da0370a5ull},
-    {"simultaneous", s_simultaneous, 0x15b985f33855cdafull},
-    {"limits", s_limits, 0x953be2219c28903dull},
-    {"gossip", s_gossip, 0x7fba4d744964c04bull},
-    {"gossip_lazy", s_gossip_lazy, 0x640a48e505d6589bull},
-    {"secondary", s_secondary, 0x0a01c75c293f3cd1ull},
-    {"scoring", s_scoring, 0x136a493f52e41608ull},
-    {"idontwant", s_idontwant, 0x75cf64a916ab9726ull},
-    {"partial", s_partial, 0x5a3f172c5cd099a9ull},
+    {"errors", s_errors, 0x329fbfbf00c75b86ull},
+    {"simultaneous", s_simultaneous, 0xa26db6e79edaa347ull},
+    {"limits", s_limits, 0xfee9c9790887921dull},
+    {"gossip", s_gossip, 0x341e89b554e4b8abull},
+    {"gossip_lazy", s_gossip_lazy, 0xb5393dd76d54038eull},
+    {"secondary", s_secondary, 0x47ee797a462fedc8ull},
+    {"scoring", s_scoring, 0x1a80df458ea9cf65ull},
+    {"idontwant", s_idontwant, 0xa666643e2b9fdbd3ull},
+    {"partial", s_partial, 0xddcdc2d94f6214f0ull},
+    {"quic", s_quic, 0x0727621f07fed5f7ull},
+    {"quic_streams", s_quic_streams, 0x7473bcae4a7110b4ull},
+    {"quic_loss", s_quic_loss, 0xf19264b01055c0acull},
+    {"quic_dial_fails", s_quic_dial_fails, 0x4a3c14370e4976e6ull},
+    {"quic_gossip", s_quic_gossip, 0xf748cd0209e23edcull},
+    {"quic_mixed", s_quic_mixed, 0x2b7c6e1130f5e5e7ull},
 };
 
 int main(int argc, char **argv) {
@@ -1440,6 +1623,7 @@ int main(int argc, char **argv) {
         scenario = s->name;
         digest = 0xCBF29CE484222325ull;
         int before = failures;
+        with_quic = 0;
         s->fn();
         free_nodes();
         if (s->want && digest != s->want) {

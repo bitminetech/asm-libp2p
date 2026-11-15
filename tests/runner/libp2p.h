@@ -22,6 +22,8 @@ typedef struct { uint64_t error; struct { uint64_t family, port; uint8_t ip[16];
 LIBP2P_ABI uint64_t libp2p_shell_size(const libp2p_shell_params *params, uint64_t *size);
 LIBP2P_ABI uint64_t libp2p_shell_init(const libp2p_shell_params *params, void *context);
 LIBP2P_ABI uint64_t libp2p_shell_listen(void *context, const void *addr, libp2p_listen_result *result);
+typedef struct { uint64_t error, socket; struct { uint64_t family, port; uint8_t ip[16]; } addr; } libp2p_bind_result;
+LIBP2P_ABI uint64_t libp2p_shell_bind(void *context, const void *addr, libp2p_bind_result *result);
 LIBP2P_ABI uint64_t libp2p_shell_perform(void *context, const void *actions, void *events);
 LIBP2P_ABI uint64_t libp2p_shell_wait(void *context, const uint64_t *timeout_ms, void *events);
 LIBP2P_ABI uint64_t libp2p_shell_close(void *context);
@@ -34,7 +36,10 @@ enum {
 
 enum { LIBP2P_KEY_ED25519 = 1, LIBP2P_KEY_SECP256K1 = 2 };
 enum { LIBP2P_MAX_PEER_ID = 48, LIBP2P_MAX_PROTOCOL = 128, LIBP2P_MAX_TOPIC = 256, LIBP2P_MAX_MSG_ID = 32 };
-enum { LIBP2P_RECEIVE_MAX = 65536, LIBP2P_ACTIONS_MIN = 1056768, LIBP2P_SCRATCH_SIZE = 594536 };
+enum { LIBP2P_RECEIVE_MAX = 65536, LIBP2P_ACTIONS_MIN = 1056768, LIBP2P_SCRATCH_SIZE = 608928 };
+enum { LIBP2P_DATAGRAM_MAX = 65535 };
+enum { LIBP2P_TCP = 0, LIBP2P_QUIC = 1 };
+enum { LIBP2P_QUIC_ON = 1, LIBP2P_QUIC_ACCEPT = 2 };
 
 typedef struct { uint64_t family, port; uint8_t ip[16]; } libp2p_addr;
 typedef struct { uint64_t len; uint8_t bytes[128]; } libp2p_proto;
@@ -65,7 +70,9 @@ typedef struct {
     uint64_t gossipsub_v12, idontwant_threshold, dontwant_slots, dontwant_ttl, max_idontwant_messages,
         max_idontwant_length;
     uint64_t gossipsub_v13, partial_messages;
-} libp2p_config;                                    /* LIBP2P_CFG_FIXED = 704 bytes */
+    uint64_t quic, quic_heap, quic_idle_ms, quic_keep_alive_ms, quic_max_data, quic_stream_data, quic_max_streams,
+        quic_sent, quic_window;
+} libp2p_config;                                    /* LIBP2P_CFG_FIXED = 776 bytes */
 
 typedef struct {
     double weight, time_weight;
@@ -75,19 +82,19 @@ typedef struct {
     double fail_weight, fail_decay, invalid_weight, invalid_decay;
 } libp2p_topic_params;                              /* 136 bytes */
 
-typedef struct { uint64_t now; uint8_t entropy[32]; } libp2p_tick;
+typedef struct { uint64_t now; uint8_t entropy[32]; uint64_t us, unix_time; } libp2p_tick;
 
 enum {
     EV_ACCEPTED = 1, EV_CONNECTED, EV_DIAL_FAILED, EV_RECEIVED, EV_SENT, EV_CLOSED, EV_DIAL, EV_DISCONNECT,
     EV_OPEN_STREAM, EV_STREAM_WRITE, EV_STREAM_CLOSE, EV_STREAM_RESET, EV_SUBSCRIBE, EV_UNSUBSCRIBE, EV_PUBLISH,
     EV_MESSAGE_ID, EV_VALIDATION, EV_APP_SCORE, EV_TOPIC_PARAMS, EV_PARTIAL_SUBSCRIBE, EV_PARTIAL_PEERS,
-    EV_PARTIAL_SEND, EV_PARTIAL_SCORE,
+    EV_PARTIAL_SEND, EV_PARTIAL_SCORE, EV_DATAGRAM,
 };
 enum {
     ACT_DIAL = 1, ACT_ADOPT, ACT_REFUSE, ACT_SEND, ACT_CLOSE, ACT_WAKEUP, ACT_PEER_CONNECTED, ACT_PEER_DISCONNECTED,
     ACT_DIAL_FAILED, ACT_STREAM_INBOUND, ACT_STREAM_OPENED, ACT_STREAM_FAILED, ACT_STREAM_DATA, ACT_STREAM_EOF,
     ACT_STREAM_RESET, ACT_MESSAGE, ACT_MESSAGE_STATUS, ACT_PUBLISHED, ACT_PEER_TOPIC, ACT_PARTIAL,
-    ACT_PARTIAL_PEERS, ACT_PARTIAL_GOSSIP,
+    ACT_PARTIAL_PEERS, ACT_PARTIAL_GOSSIP, ACT_SEND_DATAGRAM,
 };
 enum { PARTIAL_REQUESTS = 1, PARTIAL_SUPPORTS = 2 };
 enum { LIBP2P_ACCEPT = 1, LIBP2P_REJECT = 2, LIBP2P_IGNORE = 3 };
@@ -98,7 +105,8 @@ typedef struct { uint64_t size, kind; } libp2p_header;
 typedef struct { uint64_t size, kind, token; libp2p_addr addr; } ev_accepted;
 typedef struct { uint64_t size, kind, conn, value; } ev_conn;              /* CONNECTED (value unused), DIAL_FAILED, SENT, CLOSED */
 typedef struct { uint64_t size, kind, conn, count; uint8_t data[]; } ev_received;
-typedef struct { uint64_t size, kind, tag; libp2p_addr addr; uint64_t id_len; uint8_t id[48]; } ev_dial;
+typedef struct { uint64_t size, kind, tag; libp2p_addr addr; uint64_t id_len; uint8_t id[48]; uint64_t transport, socket; } ev_dial;
+typedef struct { uint64_t size, kind, socket; libp2p_addr addr; uint64_t count; uint8_t data[]; } ev_datagram;
 typedef struct { uint64_t size, kind, peer, tag, count; libp2p_proto protocols[]; } ev_open_stream;
 typedef struct { uint64_t size, kind, stream, count; uint8_t data[]; } ev_stream_write;
 typedef struct { uint64_t size, kind, handle, id_len; uint8_t id[32]; } ev_message_id;
@@ -106,7 +114,8 @@ typedef struct { uint64_t size, kind, handle, id_len; uint8_t id[32]; } ev_messa
 typedef struct { uint64_t size, kind, conn; libp2p_addr addr; } act_dial;
 typedef struct { uint64_t size, kind, token, conn; } act_adopt;
 typedef struct { uint64_t size, kind, conn, count; uint8_t data[]; } act_send;
-typedef struct { uint64_t size, kind, peer, tag, direction; libp2p_addr addr; uint64_t id_len; uint8_t id[48]; } act_peer_connected;
+typedef struct { uint64_t size, kind, peer, tag, direction; libp2p_addr addr; uint64_t id_len; uint8_t id[48]; uint64_t transport; } act_peer_connected;
+typedef struct { uint64_t size, kind, socket; libp2p_addr addr; uint64_t count; uint8_t data[]; } act_datagram;
 typedef struct { uint64_t size, kind, peer, id_len; uint8_t id[48]; } act_peer_disconnected;
 typedef struct { uint64_t size, kind, tag, reason; } act_failed;
 typedef struct { uint64_t size, kind, stream, peer, protocol; } act_stream_inbound;

@@ -42,13 +42,17 @@
 .set LIBP2P_RECEIVE_MAX, 65536          /* bytes of one RECEIVED event */
 .set LIBP2P_RX_SIZE, 65552              /* the receive buffer of a connection: one Noise message */
 .set LIBP2P_ACTIONS_MIN, 1056768        /* action room libp2p_step needs: 4096 + 64 + 16 x 65536, rounded up */
-.set LIBP2P_SCRATCH_SIZE, 594536       /* bytes of the scratch of libp2p_step */
-.set LIBP2P_STATE_VERSION, 3
+.set LIBP2P_SCRATCH_SIZE, 608928       /* bytes of the scratch of libp2p_step */
+.set LIBP2P_STATE_VERSION, 4
+.set LIBP2P_DATAGRAM_MAX, 65535         /* bytes of one DATAGRAM event */
+.set LIBP2P_QUIC_EVENTS, 262144         /* bytes of the asm-quic event list in the state */
+.set LIBP2P_QUIC_ACTIONS, 65536         /* bytes of the asm-quic action list in the state */
+.set LIBP2P_QUIC_WRITE, 16384           /* bytes of one STREAM_WRITE event for asm-quic, at most */
 
 /* ---------------------------------------------------------------- Address */
 
 .set LIBP2P_ADDR_FAMILY, 0              /* u64: 4 or 6 */
-.set LIBP2P_ADDR_PORT, 8                /* u64: TCP port */
+.set LIBP2P_ADDR_PORT, 8                /* u64: TCP or UDP port */
 .set LIBP2P_ADDR_IP, 16                 /* 16 bytes: IPv4 in the first 4 bytes, or IPv6 */
 .set LIBP2P_ADDR_SIZE, 32
 
@@ -56,6 +60,10 @@
 
 .set LIBP2P_KEY_ED25519, 1
 .set LIBP2P_KEY_SECP256K1, 2
+
+/* Transports. */
+.set LIBP2P_TCP, 0                      /* TCP with Noise and yamux or mplex */
+.set LIBP2P_QUIC, 1                     /* QUIC v1 with the libp2p TLS profile */
 
 /* ---------------------------------------------------------------- Config (input of libp2p_init) */
 
@@ -136,7 +144,20 @@
 /* gossipsub v1.3 */
 .set LIBP2P_CFG_GOSSIPSUB_V13, 688      /* 1: /meshsub/1.3.0 is proposed first and accepted; needs gossipsub_v12 */
 .set LIBP2P_CFG_PARTIAL_MESSAGES, 696   /* 1: the Partial Messages extension; needs gossipsub_v13 */
-.set LIBP2P_CFG_FIXED, 704
+/* QUIC (asm-quic) */
+.set LIBP2P_CFG_QUIC, 704               /* 0 off; LIBP2P_QUIC_ON, with LIBP2P_QUIC_ACCEPT to take inbound connections */
+.set LIBP2P_CFG_QUIC_HEAP, 712          /* heap bytes of the asm-quic state: a power of two */
+.set LIBP2P_CFG_QUIC_IDLE_MS, 720       /* max_idle_timeout */
+.set LIBP2P_CFG_QUIC_KEEP_ALIVE_MS, 728 /* a PING after this quiet time; 0: none */
+.set LIBP2P_CFG_QUIC_MAX_DATA, 736      /* initial_max_data */
+.set LIBP2P_CFG_QUIC_STREAM_DATA, 744   /* initial_max_stream_data_bidi_local and _remote */
+.set LIBP2P_CFG_QUIC_MAX_STREAMS, 752   /* initial_max_streams_bidi */
+.set LIBP2P_CFG_QUIC_SENT, 760          /* sent packet records of a connection */
+.set LIBP2P_CFG_QUIC_WINDOW, 768        /* bytes a stream may have with asm-quic, not yet acknowledged */
+.set LIBP2P_CFG_FIXED, 776
+
+.set LIBP2P_QUIC_ON, 1
+.set LIBP2P_QUIC_ACCEPT, 2
 
 /* ProtocolEntry: a protocol ID the node accepts on inbound streams. */
 .set LIBP2P_PROTO_LEN, 0
@@ -167,7 +188,9 @@
 
 .set LIBP2P_TICK_NOW, 0                 /* ms, monotonic */
 .set LIBP2P_TICK_ENTROPY, 8             /* 32 fresh random bytes */
-.set LIBP2P_TICK_SIZE, 40
+.set LIBP2P_TICK_US, 40                 /* microseconds, monotonic: the clock of now */
+.set LIBP2P_TICK_UNIX, 48               /* Unix time in seconds */
+.set LIBP2P_TICK_SIZE, 56
 
 /* StepResult (output of libp2p_step). */
 .set LIBP2P_RESULT_ACCEPTED, 0          /* events handled, from the first */
@@ -203,7 +226,9 @@
 .set LIBP2P_EVENT_PARTIAL_PEERS, 21     /* topic length, topic */
 .set LIBP2P_EVENT_PARTIAL_SEND, 22      /* peer, topic, group, metadata and message lengths, then their bytes */
 .set LIBP2P_EVENT_PARTIAL_SCORE, 23     /* peer, result, topic length, topic */
-.set LIBP2P_EVENT_LAST, 23
+/* Shell results: */
+.set LIBP2P_EVENT_DATAGRAM, 24          /* socket, address, count, bytes */
+.set LIBP2P_EVENT_LAST, 24
 
 /* Event fields. */
 .set LIBP2P_EV_TOKEN, 16                /* ACCEPTED */
@@ -218,7 +243,9 @@
 .set LIBP2P_EV_DIAL_ADDR, 24
 .set LIBP2P_EV_DIAL_ID_LEN, 56
 .set LIBP2P_EV_DIAL_ID, 64
-.set LIBP2P_EV_DIAL_SIZE, 112
+.set LIBP2P_EV_DIAL_TRANSPORT, 112      /* LIBP2P_TCP or LIBP2P_QUIC */
+.set LIBP2P_EV_DIAL_SOCKET, 120         /* QUIC: the UDP socket ID */
+.set LIBP2P_EV_DIAL_SIZE, 128
 .set LIBP2P_EV_PEER, 16                 /* DISCONNECT, OPEN_STREAM, APP_SCORE */
 .set LIBP2P_EV_PEER_SIZE, 24
 .set LIBP2P_EV_OPEN_TAG, 24             /* OPEN_STREAM */
@@ -261,6 +288,10 @@
 .set LIBP2P_EV_PSCORE_RESULT, 24
 .set LIBP2P_EV_PSCORE_TOPIC_LEN, 32
 .set LIBP2P_EV_PSCORE_TOPIC, 40
+.set LIBP2P_EV_DG_SOCKET, 16            /* DATAGRAM */
+.set LIBP2P_EV_DG_ADDR, 24
+.set LIBP2P_EV_DG_COUNT, 56
+.set LIBP2P_EV_DG_DATA, 64
 
 /* Flags of PARTIAL_SUBSCRIBE, PARTIAL_PEERS and the Partial Messages extension. */
 .set LIBP2P_PARTIAL_REQUESTS, 1         /* partial messages are wanted on the topic */
@@ -295,6 +326,8 @@
 .set LIBP2P_ACTION_PARTIAL, 20          /* peer, flags, topic length, group, metadata, message, topic */
 .set LIBP2P_ACTION_PARTIAL_PEERS, 21    /* topic length, count, topic, then peer and flags pairs */
 .set LIBP2P_ACTION_PARTIAL_GOSSIP, 22   /* topic length, count, topic, then peers */
+/* Shell requests: */
+.set LIBP2P_ACTION_SEND_DATAGRAM, 23    /* socket, address, count, bytes */
 
 /* Action fields. */
 .set LIBP2P_ACT_SIZE, 0
@@ -317,7 +350,8 @@
 .set LIBP2P_ACT_PC_ADDR, 40
 .set LIBP2P_ACT_PC_ID_LEN, 72
 .set LIBP2P_ACT_PC_ID, 80
-.set LIBP2P_ACT_PC_SIZE, 128
+.set LIBP2P_ACT_PC_TRANSPORT, 128       /* LIBP2P_TCP or LIBP2P_QUIC */
+.set LIBP2P_ACT_PC_SIZE, 136
 .set LIBP2P_ACT_PD_ID_LEN, 24
 .set LIBP2P_ACT_PD_ID, 32
 .set LIBP2P_ACT_PD_SIZE, 80
@@ -362,6 +396,10 @@
 .set LIBP2P_ACT_PL_TOPIC_LEN, 16        /* PARTIAL_PEERS, PARTIAL_GOSSIP */
 .set LIBP2P_ACT_PL_COUNT, 24
 .set LIBP2P_ACT_PL_TOPIC, 32            /* then the list, at the next multiple of 8 */
+.set LIBP2P_ACT_DG_SOCKET, 16           /* SEND_DATAGRAM */
+.set LIBP2P_ACT_DG_ADDR, 24
+.set LIBP2P_ACT_DG_COUNT, 56
+.set LIBP2P_ACT_DG_DATA, 64
 
 /* MESSAGE_STATUS values. */
 .set LIBP2P_MSG_NEW, 1                  /* judge it and send VALIDATION */
@@ -369,8 +407,8 @@
 .set LIBP2P_MSG_DROPPED, 3              /* no answer in time, or no room: drop it */
 
 /* Reasons of DIAL_FAILED, STREAM_FAILED and CLOSED. */
-.set LIBP2P_REASON_CONNECT, 1           /* the TCP connection failed, or did not open within handshake_ms */
-.set LIBP2P_REASON_HANDSHAKE, 2         /* the upgrade failed or timed out */
+.set LIBP2P_REASON_CONNECT, 1           /* the TCP connection failed or did not open within handshake_ms; QUIC: no handshake in time */
+.set LIBP2P_REASON_HANDSHAKE, 2         /* the upgrade or the QUIC handshake failed, or the upgrade timed out */
 .set LIBP2P_REASON_PEER_ID, 3           /* the peer is not the one dialled */
 .set LIBP2P_REASON_LIMIT, 4             /* a table or the heap is full */
 .set LIBP2P_REASON_PROTOCOL, 5          /* the peer refused every proposed protocol */
@@ -400,7 +438,10 @@
 .set LIBP2P_SH_STARTED, 72              /* Windows: Winsock started */
 .set LIBP2P_SH_POLL, 80                 /* offset of the poll array */
 .set LIBP2P_SH_ENTRIES, 88              /* offset of the connection entries */
-.set LIBP2P_SH_FIXED, 96
+.set LIBP2P_SH_UDPS, 96                 /* UDP sockets */
+.set LIBP2P_SH_UDP, 104                 /* 4 native sockets (u64), NONE when unused: the socket ID is the index */
+.set LIBP2P_SH_MAX_UDP, 4
+.set LIBP2P_SH_FIXED, 136
 .set LIBP2P_SE_SOCKET, 0                /* native socket, NONE when free */
 .set LIBP2P_SE_HANDLE, 8                /* the connection handle */
 .set LIBP2P_SE_STATE, 16                /* 0 free, 1 connecting, 2 open */
@@ -408,8 +449,16 @@
 .set LIBP2P_SE_DATA, 32                 /* the send buffer */
 .set LIBP2P_SE_FIXED, 32
 .set LIBP2P_SHELL_ACCEPTING, 16         /* accepted sockets that may wait for ADOPT */
+.set LIBP2P_UDP_RECEIVE, 2048           /* the largest datagram the shell reads */
+.set LIBP2P_UDP_BUFFER, 4194304         /* the send and receive buffer bytes a UDP socket asks for */
 
 /* ListenResult (output of libp2p_shell_listen). */
 .set LIBP2P_LR_ERROR, 0                 /* 0, or the OS error number */
 .set LIBP2P_LR_ADDR, 8                  /* the bound address */
 .set LIBP2P_LR_SIZE, 40
+
+/* BindResult (output of libp2p_shell_bind). */
+.set LIBP2P_BR_ERROR, 0                 /* 0, or the OS error number */
+.set LIBP2P_BR_SOCKET, 8                /* the socket ID for DIAL, DATAGRAM and SEND_DATAGRAM */
+.set LIBP2P_BR_ADDR, 16                 /* the bound address */
+.set LIBP2P_BR_SIZE, 48

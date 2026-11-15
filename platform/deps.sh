@@ -1,8 +1,12 @@
 #!/bin/sh
 # Fetch the dependencies that the README pins into build/deps/.
 # Runs inside the image from platform/linux/Dockerfile, from the repo root.
+# asm-quic calls asm-crypto too, and both go into one binary: the asm-crypto
+# pin of asm-quic must be the pin here.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
+crypto=70753eea4f8a4e937b706d9308828c7ff3a14b40    # README Dependencies
+quic=8b11514604ed16552f59b2c0891720ee5dbecf6e    # README Dependencies
 fetch() {
     dir=$root/build/deps/$1
     if [ "$(git -C "$dir" rev-parse HEAD 2>/dev/null)" != "$2" ]; then
@@ -12,4 +16,10 @@ fetch() {
         git -C "$dir" checkout -q FETCH_HEAD
     fi
 }
-fetch asm-crypto 0791b669f95be34b049265829d7d85864a1d769f    # README Dependencies
+fetch asm-crypto $crypto
+fetch asm-quic $quic
+theirs=$(sed -n 's/^fetch asm-crypto \([0-9a-f]*\).*/\1/p' "$root/build/deps/asm-quic/platform/deps.sh")
+if [ "$theirs" != "$crypto" ]; then
+    echo "deps.sh: asm-quic pins asm-crypto $theirs, asm-libp2p pins $crypto" >&2
+    exit 1
+fi

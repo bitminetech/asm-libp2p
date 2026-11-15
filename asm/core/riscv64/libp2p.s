@@ -1,11 +1,12 @@
 /*
- * asm-libp2p for RISC-V (RISC-V ELF psABI, LP64D): libp2p over TCP for an
- * Ethereum consensus client: Noise, multistream-select, yamux, mplex,
- * streams and gossipsub.
+ * asm-libp2p for RISC-V (RISC-V ELF psABI, LP64D): libp2p over TCP and QUIC
+ * for an Ethereum consensus client: Noise, multistream-select, yamux, mplex,
+ * the glue to asm-quic, streams and gossipsub.
  * Requirements: docs/reference/. Layouts: include/libp2p.inc, include/state.inc.
  *
  * One object: this file includes the other parts of the core. Hashes,
- * ciphers and keys go through asm-crypto. Baseline RV64GC instructions
+ * ciphers and keys go through asm-crypto; QUIC goes through asm-quic.
+ * Baseline RV64GC instructions
  * only. The functions and their steps follow the ARM64 core one for one;
  * frame.inc maps its registers. 8-byte loads and stores only touch 8-byte
  * aligned addresses.
@@ -18,6 +19,7 @@
 .include "sha512.inc"
 .include "ed25519.inc"
 .include "libp2p.inc"
+.include "quic.inc"
 .include "state.inc"
 .include "platform.inc"
 .include "frame.inc"
@@ -554,3 +556,4 @@ END_FUNCTION libp2p_alloc_slot
 .include "stream.s"
 .include "mux.s"
 .include "gossip.s"
+.include "quic.s"
