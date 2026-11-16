@@ -8,15 +8,16 @@
 # (tests/runner/docker.sh builds it). The implementation images keep their
 # test-plans names (go-v0.48, rust-v0.56, ...). WORK_DIR holds the test-plans
 # checkout: the fork bitminetech/test-plans, which is libp2p/test-plans 12e2ff4
-# with a fix to the go node of gossipsub-interop and a patch to c-v0.0.1, so
-# that c-libp2p emits no close events for a stream it refused. Images that
-# exist already are kept.
+# with a fix to the go node of gossipsub-interop, a patch to c-v0.0.1, so that
+# c-libp2p emits no close events for a stream it refused, and a fix to
+# nim-v1.14, so that nimble installs the pinned commits the same way on every
+# run. Images that exist already are kept.
 set -eu
 isa=$1
 work=$2
 shift 2
 root=$(cd "$(dirname "$0")/../.." && pwd)
-plans=25aca13c2b5c9765ed572f4ef8ea4c54a3c33a55    # bitminetech/test-plans, branch asm-libp2p
+plans=353d23ee364d0d7336e4a8bb9a59aad03f24a429    # bitminetech/test-plans, branch asm-libp2p
 # The cargo-chef image that builds rust-libp2p 70082df: the pinned 0.1.68 one has rustc 1.84, too old for prost 0.14.6.
 chef=lukemathwalker/cargo-chef@sha256:9573268a2a874efc1c755a0094a50c25988b2c6a0b7a520ddb7fd08d868d1c43
 

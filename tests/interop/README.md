@@ -1,6 +1,6 @@
 # transport-interop
 
-The asm-libp2p node runs the transport-interop test of [libp2p/test-plans](https://github.com/libp2p/test-plans/tree/12e2ff491db21115b8e775e0eb7ee51056d203fb/transport-interop), from the fork [bitminetech/test-plans](https://github.com/bitminetech/test-plans/tree/25aca13c2b5c9765ed572f4ef8ea4c54a3c33a55/transport-interop) with one patch to c-v0.0.1, against every implementation there that offers TCP with Noise or quic-v1. Each pair runs both ways: asm-libp2p dials the other implementation, and the other implementation dials asm-libp2p, once for each muxer the other offers over TCP, and once over quic-v1.
+The asm-libp2p node runs the transport-interop test of [libp2p/test-plans](https://github.com/libp2p/test-plans/tree/12e2ff491db21115b8e775e0eb7ee51056d203fb/transport-interop), from the fork [bitminetech/test-plans](https://github.com/bitminetech/test-plans/tree/353d23ee364d0d7336e4a8bb9a59aad03f24a429/transport-interop) with fixes to c-v0.0.1 and nim-v1.14, against every implementation there that offers TCP with Noise or quic-v1. Each pair runs both ways: asm-libp2p dials the other implementation, and the other implementation dials asm-libp2p, once for each muxer the other offers over TCP, and once over quic-v1.
 
 ```bash
 tests/runner/docker.sh
@@ -38,8 +38,9 @@ tests/interop/run.sh arm64
 
 | Item | Value |
 |---|---|
-| test-plans | The fork `bitminetech/test-plans`, branch `asm-libp2p`, commit `25aca13c2b5c9765ed572f4ef8ea4c54a3c33a55`: `libp2p/test-plans` `12e2ff491db21115b8e775e0eb7ee51056d203fb`, the go node fix of [gossipsub-interop](../gossipsub/), and the c-v0.0.1 patch below |
+| test-plans | The fork `bitminetech/test-plans`, branch `asm-libp2p`, commit `353d23ee364d0d7336e4a8bb9a59aad03f24a429`: `libp2p/test-plans` `12e2ff491db21115b8e775e0eb7ee51056d203fb`, the go node fix of [gossipsub-interop](../gossipsub/), and the c-v0.0.1 and nim-v1.14 fixes below |
 | c-v0.0.1, the patch of the fork | c-libp2p `23a6172` emits STREAM_CLOSED when it closes an inbound stream whose protocol it refused, which never emitted STREAM_OPENED. Its listener counts open streams, so when the refused gossipsub stream of the asm-libp2p node closed after the ping stream opened, the listener stopped in the middle of the ping and freed streams its other threads still used. The fork's Makefile applies `stream-close-events.patch`: close events only for a stream with a negotiated protocol |
+| nim-v1.14, the fix of the fork | nimble 0.18.2 in `nimlang/nim:2.2.4-ubuntu-regular` resolves the pinned commits of nim-libp2p `0309685` with its SAT solver and may fetch and build Nim 2.4.2; some runs fail with "Unsatisfiable dependencies" or while building that Nim. The fork's Dockerfile runs every nimble call, and the one `install_pinned` runs, with `--solver:legacy --useSystemNim`: the same packages, built with Nim 2.2.4 |
 | Redis | `redis:7-alpine` |
 | c-v0.0.1 | Its Makefile moves `WjCryptLib-master`; GitHub now names the archive folder after its commit, so `build-images.sh` matches `WjCryptLib-*` |
 | rust-v0.56 | rust-libp2p `70082df` needs a newer rustc than the pinned cargo-chef 0.1.68 image: `build-images.sh` builds with a cargo-chef image pinned by digest, on `debian:bookworm` |
