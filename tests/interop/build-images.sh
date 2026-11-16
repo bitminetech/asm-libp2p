@@ -73,7 +73,8 @@ for d in go/v0.46 go/v0.47 go/v0.48 dotnet/v1.0 js/v1.x js/v2.x js/v3.x nim/v1.1
             -e "s/zig-x86_64-linux/zig-$zarch-linux/g" "$src/interop/transport/Dockerfile"
         docker build -q -t "$name" -f "$src/interop/transport/Dockerfile" --build-arg ZIG_LOG_LEVEL=warn "$src" >/dev/null
     else
-        (cd "$impl/$d" && make image.json > build.log 2>&1) || { echo "FAIL $name: see $impl/$d/build.log"; exit 1; }
+        (cd "$impl/$d" && make image.json > build.log 2>&1) || {
+            echo "FAIL $name: $impl/$d/build.log ends:"; tail -n 40 "$impl/$d/build.log"; exit 1; }
     fi
     echo "built $name"
 done
