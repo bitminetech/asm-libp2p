@@ -5,8 +5,8 @@
 # pin of asm-quic must be the pin here.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
-crypto=70753eea4f8a4e937b706d9308828c7ff3a14b40    # README Dependencies
-quic=8b11514604ed16552f59b2c0891720ee5dbecf6e    # README Dependencies
+crypto=e7e0731e379102ad15b927f1558c93b0cb1c93d4    # README Dependencies
+quic=533cdb8a777a68b5397324cf73f41ff185e76b21    # README Dependencies
 fetch() {
     dir=$root/build/deps/$1
     if [ "$(git -C "$dir" rev-parse HEAD 2>/dev/null)" != "$2" ]; then
