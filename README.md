@@ -36,8 +36,8 @@ Standard: [asm-standard@2a19d3f](https://github.com/bitminetech/asm-standard/blo
 
 | Repo | Commit | Functions used |
 |---|---|---|
-| [asm-crypto](https://github.com/bitminetech/asm-crypto) | [`745aaf5`](https://github.com/bitminetech/asm-crypto/tree/745aaf5954c57bb65289f474326d5c566e4d653e) | `crypto_sha256`, `crypto_hkdf_extract`, `crypto_hkdf_expand`, `crypto_chacha20_aead_encrypt`, `crypto_chacha20_aead_decrypt`, `crypto_x25519`, `crypto_secp256k1_public_key`, `crypto_secp256k1_sign`, `crypto_secp256k1_verify`, `crypto_ed25519_public_key`, `crypto_ed25519_sign`, `crypto_ed25519_verify` |
-| [asm-quic](https://github.com/bitminetech/asm-quic) | [`8cbef0f`](https://github.com/bitminetech/asm-quic/tree/8cbef0fdb1c402bdf5d12530e977765e13a6703b) | `quic_state_size`, `quic_init`, `quic_step` |
+| [asm-crypto](https://github.com/bitminetech/asm-crypto) | [`0f80dd7`](https://github.com/bitminetech/asm-crypto/tree/0f80dd746dfa7a561610165065b9473e4d16a0ce) | `crypto_sha256`, `crypto_hkdf_extract`, `crypto_hkdf_expand`, `crypto_chacha20_aead_encrypt`, `crypto_chacha20_aead_decrypt`, `crypto_x25519`, `crypto_secp256k1_public_key`, `crypto_secp256k1_sign`, `crypto_secp256k1_verify`, `crypto_ed25519_public_key`, `crypto_ed25519_sign`, `crypto_ed25519_verify` |
+| [asm-quic](https://github.com/bitminetech/asm-quic) | [`d2eaf04`](https://github.com/bitminetech/asm-quic/tree/d2eaf0404eb1e7127d4d1487faab36d63205df74) | `quic_state_size`, `quic_init`, `quic_step` |
 | libSystem (macOS shell) | macOS 11.0 SDK | `socket`, `setsockopt`, `getsockopt`, `fcntl`, `bind`, `listen`, `getsockname`, `connect`, `accept`, `send`, `recv`, `sendto`, `recvfrom`, `poll`, `close`, `__error`, `clock_gettime_nsec_np`, `getentropy` |
 | ws2_32, kernel32 and bcrypt (Windows shell) | Windows 10 | `WSAStartup`, `WSACleanup`, `WSAGetLastError`, `WSAPoll`, `socket`, `setsockopt`, `getsockopt`, `ioctlsocket`, `bind`, `listen`, `getsockname`, `connect`, `accept`, `send`, `recv`, `sendto`, `recvfrom`, `WSAIoctl`, `closesocket`, `Sleep`, `QueryPerformanceCounter`, `QueryPerformanceFrequency`, `GetSystemTimeAsFileTime`, `BCryptGenRandom` |
 
