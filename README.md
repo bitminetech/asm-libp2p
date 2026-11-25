@@ -65,7 +65,7 @@ Standard: [asm-standard@185917b](https://github.com/bitminetech/asm-standard/blo
 | Repo | Commit | Functions used |
 |---|---|---|
 | [asm-crypto](https://github.com/bitminetech/asm-crypto) | [`a364b8c`](https://github.com/bitminetech/asm-crypto/tree/a364b8c3c06b55607834f93cda7b7e315323b3b8) | `crypto_sha256`, `crypto_hkdf_extract`, `crypto_hkdf_expand`, `crypto_chacha20_aead_encrypt`, `crypto_chacha20_aead_decrypt`, `crypto_x25519`, `crypto_secp256k1_public_key`, `crypto_secp256k1_sign`, `crypto_secp256k1_verify`, `crypto_ed25519_public_key`, `crypto_ed25519_sign`, `crypto_ed25519_verify` |
-| [asm-quic](https://github.com/bitminetech/asm-quic) | [`16d49e1`](https://github.com/bitminetech/asm-quic/tree/16d49e12d91d2d4004cc124860d128c200f87957) | `quic_state_size`, `quic_init`, `quic_step` |
+| [asm-quic](https://github.com/bitminetech/asm-quic) | [`8ce353c`](https://github.com/bitminetech/asm-quic/tree/8ce353c1df72f835a234118c7f8f022118d5dac0) | `quic_state_size`, `quic_init`, `quic_step` |
 | libSystem (macOS shell) | macOS 11.0 SDK | `socket`, `setsockopt`, `getsockopt`, `fcntl`, `bind`, `listen`, `getsockname`, `connect`, `accept`, `send`, `recv`, `sendto`, `recvfrom`, `poll`, `close`, `__error`, `clock_gettime_nsec_np`, `getentropy` |
 | ws2_32, kernel32 and bcrypt (Windows shell) | Windows 10 | `WSAStartup`, `WSACleanup`, `WSAGetLastError`, `WSAPoll`, `socket`, `setsockopt`, `getsockopt`, `ioctlsocket`, `bind`, `listen`, `getsockname`, `connect`, `accept`, `send`, `recv`, `sendto`, `recvfrom`, `WSAIoctl`, `closesocket`, `Sleep`, `QueryPerformanceCounter`, `QueryPerformanceFrequency`, `GetSystemTimeAsFileTime`, `BCryptGenRandom` |
 

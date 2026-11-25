@@ -6,7 +6,7 @@
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 crypto=a364b8c3c06b55607834f93cda7b7e315323b3b8    # README Dependencies
-quic=16d49e12d91d2d4004cc124860d128c200f87957    # README Dependencies
+quic=8ce353c1df72f835a234118c7f8f022118d5dac0    # README Dependencies
 fetch() {
     dir=$root/build/deps/$1
     if [ "$(git -C "$dir" rev-parse HEAD 2>/dev/null)" != "$2" ]; then
