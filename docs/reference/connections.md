@@ -263,7 +263,7 @@ libp2p_conn_new(flags) -> connection
 - Role: L0.
 - Symbol: `libp2p_conn_new`, local to its object.
 - Convention: the core ABI for each ISA (ARCHITECTURE.md section 6), with the state in x27, r15 or s9 and, inside `libp2p_step`, the scratch in x28, r14 or s10 (ARM64, x86-64, RISC-V). It returns the slot or 0, not a status.
-- Argument order: `outbound`.
+- Argument order: `flags`.
 
 ## Function `libp2p_conn_handle`
 
