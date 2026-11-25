@@ -75,39 +75,3 @@ tests/gossipsub/run.sh /path/to/work
 | go node, the commit of the fork | The callbacks of the pubsub event loop, OnIncomingRPC and OnEmitGossip, queue their work in order without blocking. In `12e2ff4` they sent to channels of 1 and 0 slots, while the goroutine that reads them calls PublishPartial, which waits for that same event loop: two partial RPCs back to back could block both for good |
 | asm-libp2p node | Linked dynamically against libc for the same reason; the library makes its system calls directly, and Shadow traps those with seccomp |
 | Shadow config | `run.sh` adds `experimental.native_preemption_enabled: true` for a composition with jvm: a JVM thread can spin without system calls, and Shadow then stops ("Busy loops" in Shadow's `docs/limitations.md`). Shadow preempts a thread after 100 ms of CPU time without a system call, and moves simulated time 10 ms. |
-
-## Results
-
-Run on 2026-11-15 in CI, the second attempt of the run of commit 043716e, with gossipsub v1.3 and the Partial Messages extension.
-
-### subnet-blob-msg
-
-32 nodes per composition, seed 1. Each time is the mean over the 12 checked messages.
-
-| Composition | Reach | Time to every node | Time to half | Duplicates per node |
-|---|---|---|---|---|
-| asm | 100% | 0.267 s | 0.099 s | 4.82 |
-| go | 100% | 0.260 s | 0.107 s | 3.87 |
-| asm+go | 100% | 0.266 s | 0.115 s | 5.13 |
-| asm+rust | 100% | 0.240 s | 0.108 s | 4.25 |
-| asm+jvm | 100% | 0.296 s | 0.112 s | 5.10 |
-| asm+nim | 100% | 0.277 s | 0.100 s | 5.91 |
-| asm+go+rust+jvm+nim | 100% | 0.266 s | 0.100 s | 4.92 |
-
-- Every composition passes: every checked message reaches every node.
-- A network of asm-libp2p alone reaches half its nodes faster than a network of go-libp2p alone, and every node 0.007 s later, with 0.95 more duplicates per node.
-- With gossipsub v1.1 only (commit 1fef64a), a network of asm-libp2p alone took 0.590 s to every node and 0.286 s to half, with 6.72 duplicates per node.
-
-### Partial messages
-
-| Scenario | asm | asm+go | asm+rust | asm+nim |
-|---|---|---|---|---|
-| `partial-messages`, 32 nodes | PASS | PASS | PASS | PASS |
-| `partial-messages-chain`, 8 nodes | PASS | PASS | PASS | PASS |
-| `partial-messages-fanout`, 8 nodes | PASS | PASS | PASS | PASS |
-
-- Before the fix of the fork, `partial-messages` asm+go failed in 2 of 3 runs: one go node stopped handling partial RPCs at 30.144 s of simulated time, while its stream readers kept reading RPCs until 37.1 s. A network of 8 go nodes alone stopped the same way in Docker, with 1 node of 8 done; with the fix, all 8 were done.
-
-### Notes
-
-- Shadow warns on GitHub's runners that it cannot emulate cpuid, which may break determinism: runs of the same commit can differ a little.
