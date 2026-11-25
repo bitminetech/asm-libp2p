@@ -15,6 +15,7 @@ tests/runner/macos.sh
 | `docker.sh` | Builds the Docker image, builds the library for all 7 targets into `build/`, and runs the runner and the [shell loop test](../shell/) for Linux x86-64, ARM64 and RISC-V. ISAs other than the host's run under QEMU user mode. |
 | `macos.sh` | Links the runner, the shell loop test and the mainnet node on a Mac against the library that `docker.sh` built, and runs the runner and the shell loop test. |
 | `tick_tables.py` | Writes the tick table of each function into its document, from the results of every target. |
+| `heatmap.py` | Writes the verification heatmap into the README from the tick tables. |
 | `abi_x86_64.s`, `abi_arm64.s`, `abi_riscv64.s` | `abi_call`, through which the runner calls every library function. Test code in assembly. |
 | `libp2p.h` | The C view of the interface, for the tests. |
 
