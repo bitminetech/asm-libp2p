@@ -4,7 +4,7 @@ libp2p over TCP and QUIC for an Ethereum consensus client, in assembly.
 
 Noise, multistream-select, yamux and mplex over TCP, QUIC v1 through asm-quic, streams, identify, and gossipsub v1.1 with peer scores, the IDONTWANT of v1.2, and the Extensions control message of v1.3 with the Partial Messages extension. Request/response protocols run in the application, on the stream API.
 
-Standard: [asm-standard@2a19d3f](https://github.com/bitminetech/asm-standard/blob/2a19d3f7fa737af1c01720b6e891703e53a682aa/ARCHITECTURE.md)
+Standard: [asm-standard@185917b](https://github.com/bitminetech/asm-standard/blob/185917bedc54ff034e40069318add463c58f4db8/ARCHITECTURE.md)
 
 <!-- CI generates the verification heatmap here. -->
 <table><tr><td>
