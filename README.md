@@ -43,7 +43,7 @@ Standard: [asm-standard@0db3e07](https://github.com/bitminetech/asm-standard/blo
 <!-- CI generates the CI panel here. -->
 <table><tr><td>
 
-<a href="https://github.com/bitminetech/asm-libp2p/actions/runs/45810865892"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme/ci-dark.svg"><img src="docs/readme/ci-light.svg" alt="Latest CI run failed: 92 of 94 jobs passed"></picture></a>
+<a href="https://github.com/bitminetech/asm-libp2p/actions/runs/45823129511"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/readme/ci-dark.svg"><img src="docs/readme/ci-light.svg" alt="Latest CI run passed: 94 of 94 jobs passed"></picture></a>
 
 </td></tr></table>
 <!-- End of the CI panel. -->
