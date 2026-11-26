@@ -1,5 +1,7 @@
 # Peer IDs and encodings
 
+Varints, protobuf, keys and peer IDs.
+
 ## Contents
 
 ### Functions

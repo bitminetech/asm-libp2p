@@ -1,5 +1,7 @@
 # Node
 
+The node: config, state, step, events.
+
 ## Contents
 
 ### Functions
@@ -62,6 +64,23 @@
 - Document: [p2p-interface.md](https://github.com/ethereum/consensus-specs/blob/313cbfe561517a81eb11607fea7c6985e562eaa9/specs/phase0/p2p-interface.md), consensus-specs at commit 313cbfe; and [connections/README.md](https://github.com/libp2p/specs/blob/c750236de43cd8b246a824b377dfdb26bae686db/connections/README.md), libp2p/specs at commit c750236.
 - Section: the network of an Ethereum consensus client: TCP with Noise and mplex or yamux, QUIC v1 through asm-quic ([quic.md](quic.md)), gossipsub v1.1, v1.2 and v1.3 with the Partial Messages extension. ARCHITECTURE.md section 6 gives the event and action model.
 
+## Integration
+
+| Item | Value |
+|---|---|
+| Startup | `libp2p_shell_clock` gives the time and entropy for `libp2p_init`; `libp2p_shell_init` builds the shell context; `libp2p_shell_listen` opens listening sockets; `libp2p_shell_bind` opens UDP sockets for QUIC |
+| Link | `libasm-libp2p.a`, with the asm-crypto objects (sha256, hmac, chacha20, aes, x25519, p256, secp256k1, sha512, ed25519) and the asm-quic `quic.o` that `platform/<OS>/build.sh` makes |
+| Event loop | The application owns it: it calls `libp2p_step` with a fresh tick and the events since the last step, and passes the events it did not accept again |
+| Actions | After a step returns 0, `libp2p_shell_perform` does its shell actions and adds their results to the events; the application handles the other actions |
+| Wakeup | The application waits with `libp2p_shell_wait` until the WAKEUP time or socket activity |
+| Buffers | Scratch of `LIBP2P_SCRATCH_SIZE` bytes; action room of `LIBP2P_ACTIONS_MIN` bytes after the 24-byte header |
+| Message IDs | The application computes them as the consensus specs define, after MESSAGE, and judges each new message with VALIDATION |
+| Request/response | The application runs it on OPEN_STREAM, STREAM_WRITE, STREAM_CLOSE and the STREAM actions |
+| QUIC | The config sets `quic` on, with `LIBP2P_QUIC_ACCEPT` to take connections that peers dial to a bound socket; DIAL names `LIBP2P_QUIC` and a socket ID of `libp2p_shell_bind`; the application builds and reads `/ip4/.../udp/.../quic-v1` multiaddrs |
+| Partial messages | The application encodes groups, parts metadata and partial messages: it joins with PARTIAL_SUBSCRIBE, gets PARTIAL, PARTIAL_PEERS and PARTIAL_GOSSIP, and sends with PARTIAL_SEND |
+| Shutdown | `libp2p_shell_close` |
+| Concurrency | One thread at a time for a state and its shell context |
+
 ## Function `libp2p_state_size`
 
 Gives the bytes of the state that `libp2p_init` builds for a config.
@@ -76,7 +95,7 @@ libp2p_state_size(config, size) -> status
 
 | Name | Role | Type |
 |---|---|---|
-| `config` | input | [`Config`](node.md#type-config) |
+| `config` | input | [`Config`](#type-config) |
 | `size` | output | u64 |
 
 ### Returns
@@ -126,8 +145,8 @@ libp2p_init(config, state) -> status
 
 | Name | Role | Type |
 |---|---|---|
-| `config` | input | [`Config`](node.md#type-config) |
-| `state` | output | [`State`](node.md#type-state) |
+| `config` | input | [`Config`](#type-config) |
+| `state` | output | [`State`](#type-state) |
 
 ### Returns
 
@@ -185,11 +204,11 @@ libp2p_step(state, tick, events, scratch, actions, result) -> status
 
 | Name | Role | Type |
 |---|---|---|
-| `state` | state | [`State`](node.md#type-state) |
+| `state` | state | [`State`](#type-state) |
 | `tick` | input | [`Tick`](#type-tick) |
-| `events` | input | [`ByteList`](node.md#type-bytelist) of [`Event`](#type-event) values |
+| `events` | input | [`ByteList`](#type-bytelist) of [`Event`](#type-event) values |
 | `scratch` | scratch | [`Scratch`](#type-scratch) |
-| `actions` | output | [`ByteList`](node.md#type-bytelist) of [`Action`](#type-action) values |
+| `actions` | output | [`ByteList`](#type-bytelist) of [`Action`](#type-action) values |
 | `result` | output | [`StepResult`](#type-stepresult) |
 
 ### Returns
@@ -258,7 +277,7 @@ libp2p_layout(config, tables) -> status, size
 
 | Name | Role | Type |
 |---|---|---|
-| `config` | input | [`Config`](node.md#type-config) |
+| `config` | input | [`Config`](#type-config) |
 | `tables` | output | the table fields of a [`State`](#type-state), from `ST_TABLES` |
 
 ### Returns
@@ -1017,7 +1036,7 @@ libp2p_slot(table, count, stride, handle) -> slot
 | `table` | input | u64: the state field of the table offset |
 | `count` | input | u64: the state field of the slot count |
 | `stride` | input | u64: bytes of a slot |
-| `handle` | input | u64: a handle ([`Handle`](node.md#type-handle)) |
+| `handle` | input | u64: a handle ([`Handle`](#type-handle)) |
 
 ### Function does
 
@@ -1052,7 +1071,7 @@ libp2p_conn(handle) -> connection
 
 | Name | Role | Type |
 |---|---|---|
-| `handle` | input | u64: a handle ([`Handle`](node.md#type-handle)) |
+| `handle` | input | u64: a handle ([`Handle`](#type-handle)) |
 
 ### Function does
 
@@ -1087,7 +1106,7 @@ libp2p_stream(handle) -> stream
 
 | Name | Role | Type |
 |---|---|---|
-| `handle` | input | u64: a handle ([`Handle`](node.md#type-handle)) |
+| `handle` | input | u64: a handle ([`Handle`](#type-handle)) |
 
 ### Function does
 
@@ -1122,7 +1141,7 @@ libp2p_peer(handle) -> peer
 
 | Name | Role | Type |
 |---|---|---|
-| `handle` | input | u64: a handle ([`Handle`](node.md#type-handle)) |
+| `handle` | input | u64: a handle ([`Handle`](#type-handle)) |
 
 ### Function does
 

@@ -1,5 +1,7 @@
 # Muxers
 
+yamux and mplex streams on a connection.
+
 ## Contents
 
 ### Functions

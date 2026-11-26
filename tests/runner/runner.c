@@ -28,7 +28,7 @@
 
 LIBP2P_ABI uint64_t crypto_sha256(const void *message, void *digest);
 
-#define STACK_CAP 16384 /* README: stack per call */
+#define STACK_CAP 16384 /* the stack limit (ARCHITECTURE.md section 6) */
 #define PAINT_BYTES (STACK_CAP + 4096)
 
 typedef struct {

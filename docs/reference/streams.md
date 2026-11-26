@@ -1,5 +1,7 @@
 # Streams
 
+Streams: open, read, write and close.
+
 ## Contents
 
 ### Functions

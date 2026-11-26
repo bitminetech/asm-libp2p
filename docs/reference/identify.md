@@ -1,5 +1,7 @@
 # Identify
 
+The identify protocol.
+
 ## Contents
 
 ### Functions

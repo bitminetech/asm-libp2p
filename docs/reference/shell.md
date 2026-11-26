@@ -1,5 +1,7 @@
 # Shell
 
+TCP and UDP sockets, clock, random bytes.
+
 ## Contents
 
 ### Functions
@@ -59,6 +61,17 @@
 
 - Document: ARCHITECTURE.md section 2 (core and shell) and section 6 (actions and events).
 - Section: the shell of this library: TCP and UDP sockets, the clock and random bytes, for Linux (system calls), macOS (libSystem) and Windows (Winsock 2, kernel32, bcrypt).
+
+## OS calls
+
+| OS | Calls | Requirements |
+|---|---|---|
+| Linux | System calls `socket`, `setsockopt`, `getsockopt`, `bind`, `listen`, `getsockname`, `connect`, `accept4`, `sendto`, `recvfrom`, `ppoll`, `close`, `clock_gettime`, `getrandom` | Linux 3.17 or later, for `getrandom`. Numbers and layouts from the kernel uapi headers of each ISA, as in Debian trixie |
+| macOS | libSystem functions of the `# uses` lines in [platform/deps.sh](../../platform/deps.sh) | macOS 11.0 or later |
+| Windows | Winsock 2.2, `Sleep`, `QueryPerformanceCounter`, `QueryPerformanceFrequency`, `GetSystemTimeAsFileTime`, `BCryptGenRandom` | Windows 10 or later |
+
+- Floating point: IEEE 754 binary64, round to nearest even, no flush to zero: the default of each OS.
+- The OS calls use their own native stack, beyond the stack limit of the library's functions.
 
 ## Function `libp2p_shell_size`
 

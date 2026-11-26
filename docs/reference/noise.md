@@ -1,5 +1,7 @@
 # Noise
 
+The Noise handshake and transport.
+
 ## Contents
 
 ### Functions

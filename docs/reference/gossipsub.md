@@ -1,5 +1,7 @@
 # gossipsub
 
+Topics, mesh, gossip and messages.
+
 ## Contents
 
 ### Functions

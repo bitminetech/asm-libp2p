@@ -1,5 +1,7 @@
 # Peer scoring
 
+Peer scores of gossipsub.
+
 ## Contents
 
 ### Functions

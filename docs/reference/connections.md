@@ -1,5 +1,7 @@
 # Connections
 
+Multistream select, upgrades and peers.
+
 ## Contents
 
 ### Functions
