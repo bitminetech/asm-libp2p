@@ -14,8 +14,8 @@
 
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
-crypto=a364b8c3c06b55607834f93cda7b7e315323b3b8
-quic=8ce353c1df72f835a234118c7f8f022118d5dac0
+crypto=6df4597fa0c3584d5eef4f89cbc647797316853d
+quic=d12ea4b467050a694ac9125ed1c2a88d9d97b041
 fetch() {
     dir=$root/build/deps/$1
     if [ "$(git -C "$dir" rev-parse HEAD 2>/dev/null)" != "$2" ]; then
